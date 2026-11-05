@@ -31,9 +31,10 @@
     abstract interface
 
         pure function ls_gettype_fn(me) result(itype)
+            !! Linear solver type (`SUNLinSolGetType`).
             import :: sun_linear_solver
             implicit none
-            class(sun_linear_solver),intent(in) :: me
+            class(sun_linear_solver),intent(in) :: me  !! the linear solver
             integer :: itype   !! `SUNLINEARSOLVER_DIRECT`, `_ITERATIVE`, ...
         end function ls_gettype_fn
 
@@ -41,21 +42,21 @@
             !! Prepare to solve with A (e.g. LU factorization).
             import :: sun_linear_solver, sun_matrix
             implicit none
-            class(sun_linear_solver),intent(inout) :: me
-            class(sun_matrix),intent(inout) :: A
-            integer :: flag
+            class(sun_linear_solver),intent(inout) :: me  !! the linear solver
+            class(sun_matrix),intent(inout) :: A  !! the matrix A (overwritten by its factors)
+            integer :: flag  !! `SUN_SUCCESS`, > 0: recoverable failure, < 0: unrecoverable
         end function ls_setup_fn
 
         function ls_solve_fn(me, A, x, b, tol) result(flag)
             !! Solve A x = b (b is not modified).
             import :: sun_linear_solver, sun_matrix, wp
             implicit none
-            class(sun_linear_solver),intent(inout) :: me
-            class(sun_matrix),intent(inout) :: A
-            real(wp),dimension(:),intent(inout) :: x
-            real(wp),dimension(:),intent(in) :: b
-            real(wp),intent(in) :: tol
-            integer :: flag
+            class(sun_linear_solver),intent(inout) :: me  !! the linear solver
+            class(sun_matrix),intent(inout) :: A  !! the matrix A (as prepared by `setup`)
+            real(wp),dimension(:),intent(inout) :: x  !! in: initial guess (iterative only); out: x
+            real(wp),dimension(:),intent(in) :: b  !! the right-hand side b
+            real(wp),intent(in) :: tol  !! tolerance (iterative solvers only)
+            integer :: flag  !! `SUN_SUCCESS`, > 0: recoverable failure, < 0: unrecoverable
         end function ls_solve_fn
 
     end interface
@@ -65,8 +66,8 @@
 
     function ls_initialize_default(me) result(flag)
     !! Default `initialize` (C: optional op; success if absent).
-    class(sun_linear_solver),intent(inout) :: me
-    integer :: flag
+    class(sun_linear_solver),intent(inout) :: me  !! the linear solver
+    integer :: flag  !! always `SUN_SUCCESS`
     me%last_flag = SUN_SUCCESS
     flag = SUN_SUCCESS
     end function ls_initialize_default

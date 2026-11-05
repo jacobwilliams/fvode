@@ -22,12 +22,13 @@
 
     public :: collect_parameters
 
-    character(len=*),parameter :: table_file = 'test/data/sundials_constants.txt'
+    character(len=*),parameter :: table_file = 'test/data/sundials_constants.txt'  !! reference table generated from the C headers
 
     type :: entry_type
-        character(len=:),allocatable :: name
-        character(len=:),allocatable :: value
-        logical :: used = .false.
+        !! a NAME VALUE entry of the reference table
+        character(len=:),allocatable :: name  !! constant name
+        character(len=:),allocatable :: value  !! constant value (as text)
+        logical :: used = .false.  !! has this constant been checked?
     end type entry_type
 
     contains
@@ -39,7 +40,7 @@
 
     subroutine collect_parameters(testsuite)
 
-    type(unittest_type),allocatable,intent(out) :: testsuite(:)
+    type(unittest_type),allocatable,intent(out) :: testsuite(:)  !! the unit tests of this suite
 
     testsuite = [ new_unittest("constants_match_sundials", test_constants) ]
 
@@ -52,10 +53,10 @@
 
     subroutine test_constants(error)
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    type(entry_type),allocatable :: table(:)
-    integer :: i
+    type(entry_type),allocatable :: table(:)  !! the reference table
+    integer :: i  !! entry counter
 
     call read_table(error, table); if (allocated(error)) return
 
@@ -287,11 +288,11 @@
 
     subroutine read_table(error, table)
 
-    type(error_type),allocatable,intent(out) :: error
-    type(entry_type),allocatable,intent(out) :: table(:)
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if reading fails)
+    type(entry_type),allocatable,intent(out) :: table(:)  !! the reference table
 
-    integer :: iunit, istat, n, i
-    character(len=256) :: line, name, value
+    integer :: iunit, istat, n, i  !! file unit, I/O status, number of entries, and entry counter
+    character(len=256) :: line, name, value  !! a line of the file, and its name and value fields
 
     open(newunit=iunit, file=table_file, status='old', action='read', iostat=istat)
     if (istat /= 0) then
@@ -326,9 +327,9 @@
 
     function lookup(table, name) result(idx)
 
-    type(entry_type),intent(inout) :: table(:)
-    character(len=*),intent(in) :: name
-    integer :: idx
+    type(entry_type),intent(inout) :: table(:)  !! the reference table (the entry found is marked as used)
+    character(len=*),intent(in) :: name  !! constant name to look up
+    integer :: idx  !! index of the entry, or 0 if not found
 
     do idx = 1, size(table)
         if (table(idx)%name == name) then
@@ -347,12 +348,12 @@
 
     subroutine check_int(error, table, name, val)
 
-    type(error_type),allocatable,intent(out) :: error
-    type(entry_type),intent(inout) :: table(:)
-    character(len=*),intent(in) :: name
-    integer,intent(in) :: val
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the check fails)
+    type(entry_type),intent(inout) :: table(:)  !! the reference table
+    character(len=*),intent(in) :: name  !! constant name
+    integer,intent(in) :: val  !! FVODE value of the constant
 
-    integer :: idx, ref, istat
+    integer :: idx, ref, istat  !! table index, reference value, and I/O status
 
     idx = lookup(table, name)
     if (idx == 0) then
@@ -376,13 +377,13 @@
 
     subroutine check_real(error, table, name, val)
 
-    type(error_type),allocatable,intent(out) :: error
-    type(entry_type),intent(inout) :: table(:)
-    character(len=*),intent(in) :: name
-    real(wp),intent(in) :: val
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the check fails)
+    type(entry_type),intent(inout) :: table(:)  !! the reference table
+    character(len=*),intent(in) :: name  !! constant name
+    real(wp),intent(in) :: val  !! FVODE value of the constant
 
-    integer :: idx, istat
-    real(wp) :: ref
+    integer :: idx, istat  !! table index and I/O status
+    real(wp) :: ref  !! reference value
 
     idx = lookup(table, name)
     if (idx == 0) then

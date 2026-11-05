@@ -42,9 +42,9 @@
 
     pure function n_vwrmsnorm(x, w) result(norm)
 
-    real(wp),dimension(:),intent(in) :: x
-    real(wp),dimension(:),intent(in) :: w
-    real(wp) :: norm
+    real(wp),dimension(:),intent(in) :: x  !! vector
+    real(wp),dimension(:),intent(in) :: w  !! weights
+    real(wp) :: norm  !! weighted RMS norm of x
 
     norm = sqrt(sum((x*w)**2) / size(x))
 
@@ -58,9 +58,9 @@
 
     function n_vinvtest(x, z) result(no_zero_found)
 
-    real(wp),dimension(:),intent(in) :: x
-    real(wp),dimension(:),intent(inout) :: z
-    logical :: no_zero_found
+    real(wp),dimension(:),intent(in) :: x  !! vector to invert
+    real(wp),dimension(:),intent(inout) :: z  !! 1/x where x /= 0 (other elements unchanged)
+    logical :: no_zero_found  !! true if no element of x is zero
 
     where (x /= 0.0_wp) z = 1.0_wp / x
     no_zero_found = all(x /= 0.0_wp)
@@ -77,12 +77,12 @@
 
     function n_vconstrmask(c, x, m) result(ok)
 
-    real(wp),dimension(:),intent(in) :: c
-    real(wp),dimension(:),intent(in) :: x
-    real(wp),dimension(:),intent(out) :: m
-    logical :: ok
+    real(wp),dimension(:),intent(in) :: c  !! constraint flags (0, +-1, +-2)
+    real(wp),dimension(:),intent(in) :: x  !! vector to check
+    real(wp),dimension(:),intent(out) :: m  !! mask: 1 where a constraint is violated, else 0
+    logical :: ok  !! true if all constraints are satisfied
 
-    logical,dimension(size(x)) :: violated
+    logical,dimension(size(x)) :: violated  !! elements that violate their constraint
 
     violated = (c /= 0.0_wp) .and. &
                ((abs(c) > 1.5_wp .and. x*c <= 0.0_wp) .or. &
@@ -100,9 +100,9 @@
 
     pure function n_vminquotient(num, denom) result(qmin)
 
-    real(wp),dimension(:),intent(in) :: num
-    real(wp),dimension(:),intent(in) :: denom
-    real(wp) :: qmin
+    real(wp),dimension(:),intent(in) :: num  !! numerators
+    real(wp),dimension(:),intent(in) :: denom  !! denominators
+    real(wp) :: qmin  !! minimum quotient (SUN_BIG_REAL if all denominators are zero)
 
     if (any(denom /= 0.0_wp)) then
         qmin = minval(num / denom, mask = denom /= 0.0_wp)

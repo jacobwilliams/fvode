@@ -28,15 +28,15 @@
     private
 
     real(wp),parameter,public :: XMAX = 2.0_wp  !! domain boundaries
-    real(wp),parameter,public :: YMAX = 1.0_wp
+    real(wp),parameter,public :: YMAX = 1.0_wp  !! upper y boundary of the domain
     integer,parameter,public  :: MX = 10        !! mesh dimensions
-    integer,parameter,public  :: MY = 5
+    integer,parameter,public  :: MY = 5  !! number of interior mesh points in y
     integer,parameter,public  :: NEQ = MX * MY  !! number of equations
 
     type,extends(cvode_solver),public :: advdiff_solver
         !! the CVODE solver plus the problem data (C: UserData)
-        real(wp) :: dx = 0.0_wp, dy = 0.0_wp
-        real(wp) :: hdcoef = 0.0_wp, hacoef = 0.0_wp, vdcoef = 0.0_wp
+        real(wp) :: dx = 0.0_wp, dy = 0.0_wp  !! mesh spacing in x and y
+        real(wp) :: hdcoef = 0.0_wp, hacoef = 0.0_wp, vdcoef = 0.0_wp  !! coefficients of the horizontal diffusion, horizontal advection and vertical diffusion terms
     end type advdiff_solver
 
     public :: f, jac, ijth
@@ -45,19 +45,19 @@
 
     pure integer function ijth(i, j)
     !! index of u(i,j) in the solution vector (C: IJth, 1-based i, j)
-    integer,intent(in) :: i, j
+    integer,intent(in) :: i, j  !! mesh indices in x and y (1-based)
     ijth = j + (i - 1) * MY
     end function ijth
 
     function f(me, t, y, ydot) result(retval)
     !! right-hand side: central differences, zero boundary values
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(out) :: ydot
-    integer :: retval
-    real(wp) :: uij, udn, uup, ult, urt, hdiff, hadv, vdiff
-    integer :: i, j
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
+    real(wp) :: uij, udn, uup, ult, urt, hdiff, hadv, vdiff  !! u at (i,j) and its four neighbors, and the diffusion and advection terms
+    integer :: i, j  !! mesh indices in x and y
     select type (me)
     class is (advdiff_solver)
         do j = 1, MY
@@ -81,14 +81,14 @@
 
     function jac(me, t, y, fy, J, tmp1, tmp2, tmp3) result(retval)
     !! band Jacobian
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y, fy
-    class(sun_matrix),intent(inout) :: J
-    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3
-    integer :: retval
-    integer :: i, jj
-    integer(ip) :: k
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y, fy  !! current state vector and f(t,y)
+    class(sun_matrix),intent(inout) :: J  !! Jacobian matrix df/dy (filled in here)
+    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors (not used)
+    integer :: retval  !! return value: 0 on success
+    integer :: i, jj  !! mesh indices in x and y
+    integer(ip) :: k  !! index of u(i,j) in the solution vector (the Jacobian column)
     select type (me)
     class is (advdiff_solver)
         select type (J)
@@ -127,10 +127,10 @@
     real(wp),parameter :: DTOUT = 0.1_wp     !! output time increment
     integer,parameter  :: NOUT  = 10         !! number of output times
 
-    type(advdiff_solver) :: cvode
-    real(wp),dimension(NEQ) :: u
-    real(wp) :: reltol, abstol, t, tout, x, y
-    integer :: iout, retval, i, j
+    type(advdiff_solver) :: cvode  !! the CVODE solver with the problem data
+    real(wp),dimension(NEQ) :: u  !! solution vector
+    real(wp) :: reltol, abstol, t, tout, x, y  !! tolerances, current and output times, and mesh coordinates
+    integer :: iout, retval, i, j  !! output counter, return flag and mesh indices
 
     reltol = 0.0_wp
     abstol = ATOL
@@ -189,17 +189,18 @@
     contains
 
         function itoa(i) result(s)
-        integer(li),intent(in) :: i
-        character(len=:),allocatable :: s
-        character(len=24) :: buf
+        !! integer to string (no blanks)
+        integer(li),intent(in) :: i  !! the integer to convert
+        character(len=:),allocatable :: s  !! the integer as a string
+        character(len=24) :: buf  !! write buffer
         write(buf,'(i0)') i
         s = trim(buf)
         end function itoa
 
         function lj(i) result(s)
         !! left-justified in 6 characters (C: %-6ld)
-        integer(li),intent(in) :: i
-        character(len=6) :: s
+        integer(li),intent(in) :: i  !! the integer to format
+        character(len=6) :: s  !! the integer, left-justified
         s = itoa(i)
         end function lj
 

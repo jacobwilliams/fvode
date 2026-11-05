@@ -13,11 +13,11 @@
 
     implicit none
 
-    real(wp),parameter :: lambda = -100.0_wp
-    type(cvode_solver) :: cv
-    real(wp),dimension(1) :: y
-    real(wp) :: t, tout
-    integer :: flag, iunit, i
+    real(wp),parameter :: lambda = -100.0_wp  !! stiffness parameter of the ODE
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(1) :: y  !! solution vector
+    real(wp) :: t, tout  !! time reached and next output time
+    integer :: flag, iunit, i  !! return flag, output unit, and output counter
 
     y = 0.0_wp
     call cv%create(CV_ADAMS, flag)
@@ -40,11 +40,12 @@
     contains
 
         function f(me, t, y, ydot) result(retval)
-        class(cvode_solver),intent(inout) :: me
-        real(wp),intent(in) :: t
-        real(wp),dimension(:),intent(in) :: y
-        real(wp),dimension(:),intent(out) :: ydot
-        integer :: retval
+        !! right-hand side of the analytic problem
+        class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+        real(wp),intent(in) :: t  !! current value of the independent variable
+        real(wp),dimension(:),intent(in) :: y  !! current state vector
+        real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+        integer :: retval  !! return value: 0 on success
         ydot(1) = lambda*y(1) + 1.0_wp/(1.0_wp + t*t) - lambda*atan(t)
         retval = 0
         end function f

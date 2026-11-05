@@ -82,9 +82,9 @@
         real(wp),dimension(:),allocatable :: vtemp3   !! temporary storage
 
         !---- tstop information
-        logical :: tstopset = .false.
-        logical :: tstopinterp = .false.
-        real(wp) :: tstop = ZERO
+        logical :: tstopset = .false.  !! is a stop time set?
+        logical :: tstopinterp = .false.  !! interpolate the solution at tstop?
+        real(wp) :: tstop = ZERO  !! stop time
 
         !---- step data
         integer :: q = 0          !! current order
@@ -124,7 +124,7 @@
         real(wp) :: hmax_inv = HMAX_INV_DEFAULT !! |h| <= 1/hmax_inv
         real(wp) :: etamax = ZERO              !! eta <= etamax
         real(wp) :: eta_min_fx = ETA_MIN_FX_DEFAULT !! eta_min_fx < eta < eta_max_fx: keep h
-        real(wp) :: eta_max_fx = ETA_MAX_FX_DEFAULT
+        real(wp) :: eta_max_fx = ETA_MAX_FX_DEFAULT  !! upper bound of the 'keep h' range
         real(wp) :: eta_max_fs = ETA_MAX_FS_DEFAULT !! eta <= eta_max_fs on the first step
         real(wp) :: eta_max_es = ETA_MAX_ES_DEFAULT !! eta <= eta_max_es on early steps
         real(wp) :: eta_max_gs = ETA_MAX_GS_DEFAULT !! eta <= eta_max_gs on a general step
@@ -211,15 +211,15 @@
         logical :: MallocDone = .false.  !! init has been called
 
         !---- stability limit detection  [not yet ported]
-        logical :: sldeton = .false.
+        logical :: sldeton = .false.  !! is stability limit detection on?
         integer :: nscon = 0         !! counter for STALD method
         integer(li) :: nor = 0       !! number of order reductions
-        real(wp),dimension(6,4) :: ssdat = ZERO
+        real(wp),dimension(6,4) :: ssdat = ZERO  !! scaled data array for STALD
 
         !---- root finding  [not yet ported]
-        integer :: nrtfn = 0
-        integer :: irfnd = 0
-        integer(li) :: nge = 0
+        integer :: nrtfn = 0  !! number of root functions
+        integer :: irfnd = 0  !! flag: did the last step find a root?
+        integer(li) :: nge = 0  !! number of root function evaluations
 
         !---- error reporting (replaces the SUNContext error handler)
         logical :: print_errors = .true.     !! print error and warning messages
@@ -228,96 +228,96 @@
     contains
 
         ! user-callable
-        procedure,public :: create              => CVodeCreate
-        procedure,public :: init                => CVodeInit
-        procedure,public :: reinit              => CVodeReInit
-        procedure,public :: ss_tolerances       => CVodeSStolerances
-        procedure,public :: sv_tolerances       => CVodeSVtolerances
-        procedure,public :: wf_tolerances       => CVodeWFtolerances
-        procedure,public :: set_nonlinear_solver => CVodeSetNonlinearSolver
-        procedure,public :: solve               => CVode
-        procedure,public :: get_dky             => CVodeGetDky
-        procedure,public :: destroy             => CVodeFree
+        procedure,public :: create              => CVodeCreate  !! `CVodeCreate`: set the method (Adams/BDF) and the default options
+        procedure,public :: init                => CVodeInit  !! `CVodeInit`: allocate memory and set the problem
+        procedure,public :: reinit              => CVodeReInit  !! `CVodeReInit`: restart with a new initial condition
+        procedure,public :: ss_tolerances       => CVodeSStolerances  !! `CVodeSStolerances`: scalar relative and absolute tolerances
+        procedure,public :: sv_tolerances       => CVodeSVtolerances  !! `CVodeSVtolerances`: scalar relative and vector absolute tolerances
+        procedure,public :: wf_tolerances       => CVodeWFtolerances  !! `CVodeWFtolerances`: user error weight function
+        procedure,public :: set_nonlinear_solver => CVodeSetNonlinearSolver  !! `CVodeSetNonlinearSolver`: attach a nonlinear solver
+        procedure,public :: solve               => CVode  !! `CVode`: integrate to tout, or take one step
+        procedure,public :: get_dky             => CVodeGetDky  !! `CVodeGetDky`: interpolate the solution (or a derivative)
+        procedure,public :: destroy             => CVodeFree  !! `CVodeFree`: free all memory
 
         ! optional inputs (cvode_io.c)
-        procedure,public :: set_error_output    => CVodeSetErrorOutput
-        procedure,public :: set_max_ord         => CVodeSetMaxOrd
-        procedure,public :: set_max_num_steps   => CVodeSetMaxNumSteps
-        procedure,public :: set_max_hnil_warns  => CVodeSetMaxHnilWarns
-        procedure,public :: set_init_step       => CVodeSetInitStep
-        procedure,public :: set_min_step        => CVodeSetMinStep
-        procedure,public :: set_max_step        => CVodeSetMaxStep
-        procedure,public :: set_stop_time       => CVodeSetStopTime
-        procedure,public :: set_interpolate_stop_time => CVodeSetInterpolateStopTime
-        procedure,public :: clear_stop_time     => CVodeClearStopTime
-        procedure,public :: set_max_err_test_fails => CVodeSetMaxErrTestFails
-        procedure,public :: set_max_conv_fails  => CVodeSetMaxConvFails
-        procedure,public :: set_nonlin_conv_coef => CVodeSetNonlinConvCoef
-        procedure,public :: set_max_nonlin_iters => CVodeSetMaxNonlinIters
-        procedure,public :: set_delta_gamma_max_lsetup => CVodeSetDeltaGammaMaxLSetup
-        procedure,public :: set_lsetup_frequency => CVodeSetLSetupFrequency
-        procedure,public :: set_eta_fixed_step_bounds => CVodeSetEtaFixedStepBounds
-        procedure,public :: set_eta_max_first_step => CVodeSetEtaMaxFirstStep
-        procedure,public :: set_eta_max_early_step => CVodeSetEtaMaxEarlyStep
-        procedure,public :: set_num_steps_eta_max_early_step => CVodeSetNumStepsEtaMaxEarlyStep
-        procedure,public :: set_eta_max         => CVodeSetEtaMax
-        procedure,public :: set_eta_min         => CVodeSetEtaMin
-        procedure,public :: set_eta_min_err_fail => CVodeSetEtaMinErrFail
-        procedure,public :: set_eta_max_err_fail => CVodeSetEtaMaxErrFail
-        procedure,public :: set_num_fails_eta_max_err_fail => CVodeSetNumFailsEtaMaxErrFail
-        procedure,public :: set_eta_conv_fail   => CVodeSetEtaConvFail
+        procedure,public :: set_error_output    => CVodeSetErrorOutput  !! `CVodeSetErrorOutput`: control error and warning messages
+        procedure,public :: set_max_ord         => CVodeSetMaxOrd  !! `CVodeSetMaxOrd`: maximum method order
+        procedure,public :: set_max_num_steps   => CVodeSetMaxNumSteps  !! `CVodeSetMaxNumSteps`: maximum steps per call
+        procedure,public :: set_max_hnil_warns  => CVodeSetMaxHnilWarns  !! `CVodeSetMaxHnilWarns`: maximum 't + h = t' warnings
+        procedure,public :: set_init_step       => CVodeSetInitStep  !! `CVodeSetInitStep`: initial step size
+        procedure,public :: set_min_step        => CVodeSetMinStep  !! `CVodeSetMinStep`: minimum step size
+        procedure,public :: set_max_step        => CVodeSetMaxStep  !! `CVodeSetMaxStep`: maximum step size
+        procedure,public :: set_stop_time       => CVodeSetStopTime  !! `CVodeSetStopTime`: stop time
+        procedure,public :: set_interpolate_stop_time => CVodeSetInterpolateStopTime  !! `CVodeSetInterpolateStopTime`: interpolate at the stop time
+        procedure,public :: clear_stop_time     => CVodeClearStopTime  !! `CVodeClearStopTime`: disable the stop time
+        procedure,public :: set_max_err_test_fails => CVodeSetMaxErrTestFails  !! `CVodeSetMaxErrTestFails`: maximum error test failures per step
+        procedure,public :: set_max_conv_fails  => CVodeSetMaxConvFails  !! `CVodeSetMaxConvFails`: maximum nonlinear convergence failures per step
+        procedure,public :: set_nonlin_conv_coef => CVodeSetNonlinConvCoef  !! `CVodeSetNonlinConvCoef`: nonlinear convergence coefficient
+        procedure,public :: set_max_nonlin_iters => CVodeSetMaxNonlinIters  !! `CVodeSetMaxNonlinIters`: maximum nonlinear iterations per step
+        procedure,public :: set_delta_gamma_max_lsetup => CVodeSetDeltaGammaMaxLSetup  !! `CVodeSetDeltaGammaMaxLSetup`: gamma ratio threshold for the linear solver setup
+        procedure,public :: set_lsetup_frequency => CVodeSetLSetupFrequency  !! `CVodeSetLSetupFrequency`: maximum steps between linear solver setups
+        procedure,public :: set_eta_fixed_step_bounds => CVodeSetEtaFixedStepBounds  !! `CVodeSetEtaFixedStepBounds`: range of eta in which h is kept
+        procedure,public :: set_eta_max_first_step => CVodeSetEtaMaxFirstStep  !! `CVodeSetEtaMaxFirstStep`: maximum eta after the first step
+        procedure,public :: set_eta_max_early_step => CVodeSetEtaMaxEarlyStep  !! `CVodeSetEtaMaxEarlyStep`: maximum eta on early steps
+        procedure,public :: set_num_steps_eta_max_early_step => CVodeSetNumStepsEtaMaxEarlyStep  !! `CVodeSetNumStepsEtaMaxEarlyStep`: number of early steps
+        procedure,public :: set_eta_max         => CVodeSetEtaMax  !! `CVodeSetEtaMax`: maximum eta on a general step
+        procedure,public :: set_eta_min         => CVodeSetEtaMin  !! `CVodeSetEtaMin`: minimum eta on a general step
+        procedure,public :: set_eta_min_err_fail => CVodeSetEtaMinErrFail  !! `CVodeSetEtaMinErrFail`: minimum eta after an error test failure
+        procedure,public :: set_eta_max_err_fail => CVodeSetEtaMaxErrFail  !! `CVodeSetEtaMaxErrFail`: maximum eta after multiple error test failures
+        procedure,public :: set_num_fails_eta_max_err_fail => CVodeSetNumFailsEtaMaxErrFail  !! `CVodeSetNumFailsEtaMaxErrFail`: error test failures before eta_max_ef applies
+        procedure,public :: set_eta_conv_fail   => CVodeSetEtaConvFail  !! `CVodeSetEtaConvFail`: eta after a nonlinear convergence failure
 
         ! optional outputs (cvode_io.c)
-        procedure,public :: get_num_steps       => CVodeGetNumSteps
-        procedure,public :: get_num_rhs_evals   => CVodeGetNumRhsEvals
-        procedure,public :: get_num_lin_solv_setups => CVodeGetNumLinSolvSetups
-        procedure,public :: get_num_err_test_fails => CVodeGetNumErrTestFails
-        procedure,public :: get_last_order      => CVodeGetLastOrder
-        procedure,public :: get_current_order   => CVodeGetCurrentOrder
-        procedure,public :: get_actual_init_step => CVodeGetActualInitStep
-        procedure,public :: get_last_step       => CVodeGetLastStep
-        procedure,public :: get_current_step    => CVodeGetCurrentStep
-        procedure,public :: get_current_time    => CVodeGetCurrentTime
-        procedure,public :: get_tol_scale_factor => CVodeGetTolScaleFactor
-        procedure,public :: get_num_nonlin_solv_iters => CVodeGetNumNonlinSolvIters
-        procedure,public :: get_num_nonlin_solv_conv_fails => CVodeGetNumNonlinSolvConvFails
-        procedure,public :: get_num_step_solve_fails => CVodeGetNumStepSolveFails
-        procedure,public :: get_current_gamma   => CVodeGetCurrentGamma
-        procedure,public :: get_num_stab_lim_order_reds => CVodeGetNumStabLimOrderReds
-        procedure,public :: get_num_g_evals     => CVodeGetNumGEvals
-        procedure,public :: get_current_state   => CVodeGetCurrentState
-        procedure,public :: get_err_weights     => CVodeGetErrWeights
-        procedure,public :: get_est_local_errors => CVodeGetEstLocalErrors
-        procedure,public :: get_integrator_stats => CVodeGetIntegratorStats
-        procedure,public :: get_nonlin_solv_stats => CVodeGetNonlinSolvStats
-        procedure,public :: print_all_stats     => CVodePrintAllStats
+        procedure,public :: get_num_steps       => CVodeGetNumSteps  !! `CVodeGetNumSteps`: number of steps
+        procedure,public :: get_num_rhs_evals   => CVodeGetNumRhsEvals  !! `CVodeGetNumRhsEvals`: number of f evaluations
+        procedure,public :: get_num_lin_solv_setups => CVodeGetNumLinSolvSetups  !! `CVodeGetNumLinSolvSetups`: number of linear solver setups
+        procedure,public :: get_num_err_test_fails => CVodeGetNumErrTestFails  !! `CVodeGetNumErrTestFails`: number of error test failures
+        procedure,public :: get_last_order      => CVodeGetLastOrder  !! `CVodeGetLastOrder`: order used on the last step
+        procedure,public :: get_current_order   => CVodeGetCurrentOrder  !! `CVodeGetCurrentOrder`: order to be used on the next step
+        procedure,public :: get_actual_init_step => CVodeGetActualInitStep  !! `CVodeGetActualInitStep`: initial step size actually used
+        procedure,public :: get_last_step       => CVodeGetLastStep  !! `CVodeGetLastStep`: last step size
+        procedure,public :: get_current_step    => CVodeGetCurrentStep  !! `CVodeGetCurrentStep`: step size to be used next
+        procedure,public :: get_current_time    => CVodeGetCurrentTime  !! `CVodeGetCurrentTime`: current internal time
+        procedure,public :: get_tol_scale_factor => CVodeGetTolScaleFactor  !! `CVodeGetTolScaleFactor`: tolerance scale factor
+        procedure,public :: get_num_nonlin_solv_iters => CVodeGetNumNonlinSolvIters  !! `CVodeGetNumNonlinSolvIters`: number of nonlinear iterations
+        procedure,public :: get_num_nonlin_solv_conv_fails => CVodeGetNumNonlinSolvConvFails  !! `CVodeGetNumNonlinSolvConvFails`: number of nonlinear convergence failures
+        procedure,public :: get_num_step_solve_fails => CVodeGetNumStepSolveFails  !! `CVodeGetNumStepSolveFails`: number of failed steps due to nonlinear solver failures
+        procedure,public :: get_current_gamma   => CVodeGetCurrentGamma  !! `CVodeGetCurrentGamma`: current gamma
+        procedure,public :: get_num_stab_lim_order_reds => CVodeGetNumStabLimOrderReds  !! `CVodeGetNumStabLimOrderReds`: order reductions by STALD
+        procedure,public :: get_num_g_evals     => CVodeGetNumGEvals  !! `CVodeGetNumGEvals`: number of root function evaluations
+        procedure,public :: get_current_state   => CVodeGetCurrentState  !! `CVodeGetCurrentState`: current internal state
+        procedure,public :: get_err_weights     => CVodeGetErrWeights  !! `CVodeGetErrWeights`: error weights
+        procedure,public :: get_est_local_errors => CVodeGetEstLocalErrors  !! `CVodeGetEstLocalErrors`: estimated local errors
+        procedure,public :: get_integrator_stats => CVodeGetIntegratorStats  !! `CVodeGetIntegratorStats`: main integrator statistics
+        procedure,public :: get_nonlin_solv_stats => CVodeGetNonlinSolvStats  !! `CVodeGetNonlinSolvStats`: nonlinear solver statistics
+        procedure,public :: print_all_stats     => CVodePrintAllStats  !! `CVodePrintAllStats`: print all statistics
 
         ! linear solver interface (cvode_ls.c, submodule fvode_core_ls)
-        procedure,public :: set_linear_solver   => CVodeSetLinearSolver
-        procedure,public :: set_jac_fn          => CVodeSetJacFn
-        procedure,public :: set_jac_eval_frequency => CVodeSetJacEvalFrequency
-        procedure,public :: set_linear_solution_scaling => CVodeSetLinearSolutionScaling
-        procedure,public :: set_delta_gamma_max_bad_jac => CVodeSetDeltaGammaMaxBadJac
-        procedure,public :: get_num_jac_evals   => CVodeGetNumJacEvals
-        procedure,public :: get_num_lin_rhs_evals => CVodeGetNumLinRhsEvals
-        procedure,public :: get_num_lin_iters   => CVodeGetNumLinIters
-        procedure,public :: get_num_lin_conv_fails => CVodeGetNumLinConvFails
-        procedure,public :: get_num_prec_evals  => CVodeGetNumPrecEvals
-        procedure,public :: get_num_prec_solves => CVodeGetNumPrecSolves
-        procedure,public :: get_last_lin_flag   => CVodeGetLastLinFlag
-        procedure,public :: get_jac_time        => CVodeGetJacTime
-        procedure,public :: get_jac_num_steps   => CVodeGetJacNumSteps
+        procedure,public :: set_linear_solver   => CVodeSetLinearSolver  !! `CVodeSetLinearSolver`: attach a linear solver and matrix
+        procedure,public :: set_jac_fn          => CVodeSetJacFn  !! `CVodeSetJacFn`: user Jacobian function
+        procedure,public :: set_jac_eval_frequency => CVodeSetJacEvalFrequency  !! `CVodeSetJacEvalFrequency`: maximum steps between Jacobian evaluations
+        procedure,public :: set_linear_solution_scaling => CVodeSetLinearSolutionScaling  !! `CVodeSetLinearSolutionScaling`: BDF solution scaling on/off
+        procedure,public :: set_delta_gamma_max_bad_jac => CVodeSetDeltaGammaMaxBadJac  !! `CVodeSetDeltaGammaMaxBadJac`: gamma ratio threshold for a bad Jacobian
+        procedure,public :: get_num_jac_evals   => CVodeGetNumJacEvals  !! `CVodeGetNumJacEvals`: number of Jacobian evaluations
+        procedure,public :: get_num_lin_rhs_evals => CVodeGetNumLinRhsEvals  !! `CVodeGetNumLinRhsEvals`: f evaluations in the linear solver interface
+        procedure,public :: get_num_lin_iters   => CVodeGetNumLinIters  !! `CVodeGetNumLinIters`: number of linear iterations
+        procedure,public :: get_num_lin_conv_fails => CVodeGetNumLinConvFails  !! `CVodeGetNumLinConvFails`: number of linear convergence failures
+        procedure,public :: get_num_prec_evals  => CVodeGetNumPrecEvals  !! `CVodeGetNumPrecEvals`: number of preconditioner setups
+        procedure,public :: get_num_prec_solves => CVodeGetNumPrecSolves  !! `CVodeGetNumPrecSolves`: number of preconditioner solves
+        procedure,public :: get_last_lin_flag   => CVodeGetLastLinFlag  !! `CVodeGetLastLinFlag`: last linear solver flag
+        procedure,public :: get_jac_time        => CVodeGetJacTime  !! `CVodeGetJacTime`: time of the last Jacobian evaluation
+        procedure,public :: get_jac_num_steps   => CVodeGetJacNumSteps  !! `CVodeGetJacNumSteps`: step number of the last Jacobian evaluation
 
         ! diagonal linear solver (cvode_diag.c, submodule fvode_core_diag)
-        procedure,public :: diag                => CVDiag
-        procedure,public :: get_diag_num_rhs_evals => CVDiagGetNumRhsEvals
-        procedure,public :: get_diag_last_flag  => CVDiagGetLastFlag
+        procedure,public :: diag                => CVDiag  !! `CVDiag`: attach the diagonal linear solver
+        procedure,public :: get_diag_num_rhs_evals => CVDiagGetNumRhsEvals  !! `CVDiagGetNumRhsEvals`: f evaluations for the diagonal Jacobian
+        procedure,public :: get_diag_last_flag  => CVDiagGetLastFlag  !! `CVDiagGetLastFlag`: last flag of the diagonal solver
 
         ! nonlinear solver interface (cvode_nls.c)
-        procedure :: nls_sys      => cvNlsSys
-        procedure :: nls_lsetup   => cvNlsLSetup
-        procedure :: nls_lsolve   => cvNlsLSolve
-        procedure :: nls_convtest => cvNlsConvTest
+        procedure :: nls_sys      => cvNlsSys  !! `cvNlsSys`: nonlinear system function (residual or fixed-point)
+        procedure :: nls_lsetup   => cvNlsLSetup  !! `cvNlsLSetup`: linear solver setup for Newton
+        procedure :: nls_lsolve   => cvNlsLSolve  !! `cvNlsLSolve`: linear solve for Newton
+        procedure :: nls_convtest => cvNlsConvTest  !! `cvNlsConvTest`: CVODE's nonlinear convergence test
 
     end type cvode_solver
 
@@ -330,10 +330,10 @@
             import :: cvode_solver, wp
             implicit none
             class(cvode_solver),intent(inout) :: me  !! the solver (extend it to carry data)
-            real(wp),intent(in) :: t
-            real(wp),dimension(:),intent(in) :: y
-            real(wp),dimension(:),intent(out) :: ydot
-            integer :: retval
+            real(wp),intent(in) :: t  !! independent variable
+            real(wp),dimension(:),intent(in) :: y  !! state vector at t
+            real(wp),dimension(:),intent(out) :: ydot  !! right-hand side f(t,y)
+            integer :: retval  !! 0 on success, > 0 for a recoverable error, < 0 for an unrecoverable error
         end function cv_rhs_fn
 
         function cv_ewt_fn(me, y, ewt) result(retval)
@@ -341,10 +341,10 @@
             !! nonzero on failure.
             import :: cvode_solver, wp
             implicit none
-            class(cvode_solver),intent(inout) :: me
-            real(wp),dimension(:),intent(in) :: y
-            real(wp),dimension(:),intent(out) :: ewt
-            integer :: retval
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: y  !! current state vector
+            real(wp),dimension(:),intent(out) :: ewt  !! error weights (must be > 0)
+            integer :: retval  !! 0 on success, nonzero on failure
         end function cv_ewt_fn
 
         function cv_jac_fn(me, t, y, fy, J, tmp1, tmp2, tmp3) result(retval)
@@ -354,13 +354,13 @@
             !! > 0 for a recoverable error, < 0 for an unrecoverable error.
             import :: cvode_solver, sun_matrix, wp
             implicit none
-            class(cvode_solver),intent(inout) :: me
-            real(wp),intent(in) :: t
-            real(wp),dimension(:),intent(in) :: y
-            real(wp),dimension(:),intent(in) :: fy
-            class(sun_matrix),intent(inout) :: J
-            real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3
-            integer :: retval
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: t  !! independent variable
+            real(wp),dimension(:),intent(in) :: y  !! state vector at t
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            class(sun_matrix),intent(inout) :: J  !! Jacobian matrix df/dy to fill
+            real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors of length n
+            integer :: retval  !! 0 on success, > 0 for a recoverable error, < 0 for an unrecoverable error
         end function cv_jac_fn
 
     end interface
@@ -373,96 +373,111 @@
     interface
 
         module subroutine CVodeSetLinearSolver(me, LS, A, flag)
-            class(cvode_solver),intent(inout) :: me
-            class(sun_linear_solver),intent(in) :: LS
-            class(sun_matrix),intent(in),optional :: A
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            class(sun_linear_solver),intent(in) :: LS  !! the linear solver (copied)
+            class(sun_matrix),intent(in),optional :: A  !! the matrix (copied; required for direct solvers)
+            integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetLinearSolver
 
         module subroutine CVodeSetJacFn(me, jac, flag)
-            class(cvode_solver),intent(inout) :: me
-            procedure(cv_jac_fn),optional :: jac
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_jac_fn),optional :: jac  !! user Jacobian function (absent: use the difference-quotient Jacobian)
+            integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetJacFn
 
         module subroutine CVodeSetJacEvalFrequency(me, msbj, flag)
-            class(cvode_solver),intent(inout) :: me
-            integer(li),intent(in) :: msbj
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer(li),intent(in) :: msbj  !! max steps between Jacobian evaluations (0: default)
+            integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetJacEvalFrequency
 
         module subroutine CVodeSetLinearSolutionScaling(me, onoff, flag)
-            class(cvode_solver),intent(inout) :: me
-            logical,intent(in) :: onoff
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            logical,intent(in) :: onoff  !! enable (`.true.`) or disable the solution scaling
+            integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetLinearSolutionScaling
 
         module subroutine CVodeSetDeltaGammaMaxBadJac(me, dgmax_jbad, flag)
-            class(cvode_solver),intent(inout) :: me
-            real(wp),intent(in) :: dgmax_jbad
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: dgmax_jbad  !! gamma ratio threshold (<= 0: default)
+            integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetDeltaGammaMaxBadJac
 
         module function cvLsInitialize(me) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! 0 on success, otherwise the linear solver's error flag
         end function cvLsInitialize
 
         module function cvLsReInitialize(me) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! always `CVLS_SUCCESS`
         end function cvLsReInitialize
 
         module function cvLsSetup(me, convfail, ypred, fpred, jcur) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            integer,intent(in) :: convfail
-            real(wp),dimension(:),intent(in) :: ypred
-            real(wp),dimension(:),intent(in) :: fpred
-            logical,intent(out) :: jcur
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(in) :: convfail  !! convergence failure status (`CV_NO_FAILURES`, `CV_FAIL_BAD_J`, `CV_FAIL_OTHER`)
+            real(wp),dimension(:),intent(in) :: ypred  !! predicted state
+            real(wp),dimension(:),intent(in) :: fpred  !! f at the predicted state
+            logical,intent(out) :: jcur  !! set to `.true.` if the Jacobian was re-evaluated
+            integer :: flag  !! 0 on success, > 0 for a recoverable failure, < 0 otherwise
         end function cvLsSetup
 
         module function cvLsSolve(me, b, weight, ynow, fnow) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            real(wp),dimension(:),intent(inout) :: b
-            real(wp),dimension(:),intent(in) :: weight
-            real(wp),dimension(:),intent(in) :: ynow
-            real(wp),dimension(:),intent(in) :: fnow
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(inout) :: b  !! right-hand side on input, solution on output
+            real(wp),dimension(:),intent(in) :: weight  !! error weights
+            real(wp),dimension(:),intent(in) :: ynow  !! current state
+            real(wp),dimension(:),intent(in) :: fnow  !! f at the current state
+            integer :: flag  !! 0 on success, 1 for a recoverable failure, -1 for an unrecoverable one
         end function cvLsSolve
 
         module subroutine cvLsFree(me)
-            class(cvode_solver),intent(inout) :: me
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
         end subroutine cvLsFree
 
         ! diagonal linear solver: submodule fvode_core_diag (cvode_diag.c)
 
         module subroutine CVDiag(me, flag)
-            class(cvode_solver),intent(inout) :: me
-            integer,intent(out) :: flag
+            !! See the implementation in the submodule (`fvode_core_diag`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(out) :: flag  !! return flag: `CVDIAG_SUCCESS` or a negative error code
         end subroutine CVDiag
 
         module function CVDiagInit(me) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_diag`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! always 0
         end function CVDiagInit
 
         module function CVDiagSetup(me, ypred, fpred, jcur) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            real(wp),dimension(:),intent(in) :: ypred
-            real(wp),dimension(:),intent(in) :: fpred
-            logical,intent(out) :: jcur
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_diag`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: ypred  !! predicted state
+            real(wp),dimension(:),intent(in) :: fpred  !! f at the predicted state
+            logical,intent(out) :: jcur  !! set to `.true.` on success
+            integer :: flag  !! 0 on success, 1 for a recoverable failure, -1 for an unrecoverable one
         end function CVDiagSetup
 
         module function CVDiagSolve(me, b) result(flag)
-            class(cvode_solver),intent(inout) :: me
-            real(wp),dimension(:),intent(inout) :: b
-            integer :: flag
+            !! See the implementation in the submodule (`fvode_core_diag`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(inout) :: b  !! right-hand side on input, solution on output
+            integer :: flag  !! 0 on success, 1 if M is not invertible
         end function CVDiagSolve
 
         module subroutine CVDiagFree(me)
-            class(cvode_solver),intent(inout) :: me
+            !! See the implementation in the submodule (`fvode_core_diag`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
         end subroutine CVDiagFree
 
     end interface
@@ -482,11 +497,11 @@
 
     subroutine CVodeCreate(me, lmm, flag)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
     integer,intent(in) :: lmm   !! `CV_ADAMS` or `CV_BDF`
-    integer,intent(out) :: flag
+    integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_ILL_INPUT`
 
-    integer :: maxord
+    integer :: maxord  !! maximum order of the method
 
     if ((lmm /= CV_ADAMS) .and. (lmm /= CV_BDF)) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeCreate', &
@@ -559,19 +574,20 @@
 !  `CVodeInit`: allocate and initialize memory for the problem
 !  `y' = f(t, y)`, `y(t0) = y0`.
 !
-!  @note In C, `CVodeInit` also attaches a default Newton solver. Newton is
-!  not ported yet: attach a solver with [[CVodeSetNonlinearSolver]] after
-!  calling this.
+!  As in C, a Newton nonlinear solver is attached by default; use
+!  [[CVodeSetNonlinearSolver]] to attach a different one (e.g. fixed point).
+!  A Newton solver also needs a linear solver ([[CVodeSetLinearSolver]] or
+!  [[CVDiag]]).
 
     subroutine CVodeInit(me, f, t0, y0, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    procedure(cv_rhs_fn) :: f
-    real(wp),intent(in) :: t0
-    real(wp),dimension(:),intent(in) :: y0
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    procedure(cv_rhs_fn) :: f  !! right-hand side function
+    real(wp),intent(in) :: t0  !! initial time
+    real(wp),dimension(:),intent(in) :: y0  !! initial state vector
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    integer :: i, k
+    integer :: i, k  !! indices into `ssdat`
 
     if (me%qmax == 0) then
         call cvProcessError(me, CV_MEM_NULL, 'CVodeInit', 'cvode_mem = NULL illegal.')
@@ -654,12 +670,12 @@
 
     subroutine CVodeReInit(me, t0, y0, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t0
-    real(wp),dimension(:),intent(in) :: y0
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t0  !! initial time
+    real(wp),dimension(:),intent(in) :: y0  !! initial state vector (same size as in `init`)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    integer :: i, k
+    integer :: i, k  !! indices into `ssdat`
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeReInit', 'Attempt to call before CVodeInit.')
@@ -735,10 +751,10 @@
 
     subroutine CVodeSStolerances(me, reltol, abstol, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: reltol
-    real(wp),intent(in) :: abstol
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: reltol  !! relative tolerance (>= 0)
+    real(wp),intent(in) :: abstol  !! absolute tolerance (>= 0)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeSStolerances', 'Attempt to call before CVodeInit.')
@@ -780,12 +796,12 @@
 
     subroutine CVodeSVtolerances(me, reltol, abstol, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: reltol
-    real(wp),dimension(:),intent(in) :: abstol
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: reltol  !! relative tolerance (>= 0)
+    real(wp),dimension(:),intent(in) :: abstol  !! absolute tolerances, one per component (>= 0)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    real(wp) :: atolmin
+    real(wp) :: atolmin  !! smallest absolute tolerance
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeSVtolerances', 'Attempt to call before CVodeInit.')
@@ -836,9 +852,9 @@
 
     subroutine CVodeWFtolerances(me, efun, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    procedure(cv_ewt_fn) :: efun
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    procedure(cv_ewt_fn) :: efun  !! user function that computes the error weights
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeWFtolerances', 'Attempt to call before CVodeInit.')
@@ -867,17 +883,17 @@
 
     subroutine CVode(me, tout, yout, tret, itask, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: tout
-    real(wp),dimension(:),intent(inout) :: yout
-    real(wp),intent(out) :: tret
-    integer,intent(in) :: itask
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: tout  !! next time at which a solution is desired
+    real(wp),dimension(:),intent(inout) :: yout  !! solution at `tret` (output)
+    real(wp),intent(out) :: tret  !! time reached (output)
+    integer,intent(in) :: itask  !! `CV_NORMAL` or `CV_ONE_STEP`
+    integer,intent(out) :: flag  !! `CV_SUCCESS`, `CV_TSTOP_RETURN`, `CV_ROOT_RETURN`, or a negative error code
 
-    integer(li) :: nstloc
-    integer :: retval, hflag, kflag, istate, ier
-    integer :: ewtsetOK
-    real(wp) :: troundoff, tout_hin, rh, nrm
+    integer(li) :: nstloc  !! number of steps taken in this call
+    integer :: retval, hflag, kflag, istate, ier  !! return flags of f, cvHin, cvStep, the call, and CVodeGetDky / cvInitialSetup
+    integer :: ewtsetOK  !! return flag of the error weight function (0: success)
+    real(wp) :: troundoff, tout_hin, rh, nrm  !! roundoff in t, tout used by cvHin, |h|/hmax, norm of zn(:,0)
 
     tret = me%tretlast
 
@@ -1224,15 +1240,15 @@
 
     subroutine CVodeGetDky(me, t, k, dky, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    integer,intent(in) :: k
-    real(wp),dimension(:),intent(inout) :: dky
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t  !! time at which to interpolate (tn - hu <= t <= tn)
+    integer,intent(in) :: k  !! derivative order (0 <= k <= q)
+    real(wp),dimension(:),intent(inout) :: dky  !! k-th derivative of the interpolating polynomial at t (output)
+    integer,intent(out) :: flag  !! `CV_SUCCESS`, `CV_BAD_K`, `CV_BAD_T` or `CV_BAD_DKY`
 
-    real(wp) :: s, r, c
-    real(wp) :: tfuzz, tp, tn1
-    integer :: i, j
+    real(wp) :: s, r, c  !! scaled time (t - tn)/h, the factor h^(-k), and a polynomial coefficient
+    real(wp) :: tfuzz, tp, tn1  !! time slack and the interval limits for t
+    integer :: i, j  !! loop indices
 
     if (size(dky, kind=ip) /= me%n) then
         call cvProcessError(me, CV_BAD_DKY, 'CVodeGetDky', 'dky = NULL illegal.')
@@ -1290,7 +1306,7 @@
 
     subroutine CVodeFree(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     call cvFreeVectors(me)
     if (allocated(me%NLS)) deallocate(me%NLS)
@@ -1312,7 +1328,7 @@
 
     subroutine cvLFree(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     select case (me%ls_kind)
     case (LS_GENERIC); call cvLsFree(me)
@@ -1332,8 +1348,8 @@
 
     subroutine cvAllocVectors(me, n)
 
-    class(cvode_solver),intent(inout) :: me
-    integer(ip),intent(in) :: n
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer(ip),intent(in) :: n  !! problem size
 
     call cvFreeVectors(me)
 
@@ -1355,7 +1371,7 @@
 
     subroutine cvFreeVectors(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     if (allocated(me%ewt))     deallocate(me%ewt)
     if (allocated(me%acor))    deallocate(me%acor)
@@ -1379,12 +1395,12 @@
 
     function cvInitialSetup(me, tout) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: tout
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: tout  !! first output time
+    integer :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    integer :: ier
-    real(wp) :: tdist, tround
+    integer :: ier  !! return flag of the called functions
+    real(wp) :: tdist, tround  !! distance to tout and roundoff in t
 
     ! check that tout is not too close to the initial time
     tdist  = abs(tout - me%tn)
@@ -1463,14 +1479,14 @@
 
     function cvHin(me, tout) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: tout
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: tout  !! first output time (or tstop)
+    integer :: flag  !! `CV_SUCCESS`, `CV_RHSFUNC_FAIL` or `CV_REPTD_RHSFUNC_ERR`
 
-    integer :: retval, sgn, count1, count2
-    real(wp) :: tdiff, tdist, tround, hlb, hub
-    real(wp) :: hg, hgs, hs, hnew, hrat, h0, yddnrm
-    logical :: hgOK
+    integer :: retval, sgn, count1, count2  !! return flag of cvYddNorm, direction of integration (+1/-1), and the loop counters
+    real(wp) :: tdiff, tdist, tround, hlb, hub  !! tout - t0, its magnitude, roundoff in t, and lower/upper bounds on h0
+    real(wp) :: hg, hgs, hs, hnew, hrat, h0, yddnrm  !! trial step, signed trial step, last feasible step, new step, hnew/hg, result, norm of y''
+    logical :: hgOK  !! was y'' computed successfully for the trial step?
 
     ! if tout is too close to tn, give up
     tdiff  = tout - me%tn
@@ -1582,12 +1598,12 @@
 
     function cvUpperBoundH0(me, tdist) result(hub)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: tdist
-    real(wp) :: hub
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: tdist  !! distance |tout - t0|
+    real(wp) :: hub  !! upper bound on the initial step size
 
-    real(wp) :: hub_inv
-    integer :: ier
+    real(wp) :: hub_inv  !! inverse of the bound based on |y0|/|y0'|
+    integer :: ier  !! return flag of the error weight function (not used, as in C)
 
     ! bound based on |y0|/|y0'| -- allow at most an increase of
     ! HUB_FACTOR in y0 (based on a forward Euler step). The weight
@@ -1619,12 +1635,12 @@
 
     function cvYddNorm(me, hg, yddnrm) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: hg
-    real(wp),intent(out) :: yddnrm
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: hg  !! trial step size
+    real(wp),intent(out) :: yddnrm  !! WRMS norm of the estimated y'' (output)
+    integer :: flag  !! `CV_SUCCESS`, `CV_RHSFUNC_FAIL` or `RHSFUNC_RECVR`
 
-    integer :: retval
+    integer :: retval  !! return flag of f
 
     me%y = hg*me%zn(:,1) + me%zn(:,0)
     retval = me%f(me, me%tn + hg, me%y, me%tempv)
@@ -1657,17 +1673,17 @@
 
     function cvStep(me) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer :: flag  !! `CV_SUCCESS` or a failure flag for cvHandleFailure
 
-    real(wp) :: saved_t  ! time to restore to if a failure occurs
-    real(wp) :: dsm      ! local truncation error estimate
-    integer :: nflag, kflag ! nonlinear solver flags
-    integer :: eflag     ! error test return flag
+    real(wp) :: saved_t  !! time to restore to if a failure occurs
+    real(wp) :: dsm  !! local truncation error estimate
+    integer :: nflag, kflag  !! nonlinear solver flags
+    integer :: eflag  !! error test return flag
 
     ! are we computing sensitivities with the simultaneous approach?
-    integer :: ncf  ! corrector failures in this step attempt
-    integer :: nef  ! error test failures in this step attempt
+    integer :: ncf  !! corrector failures in this step attempt
+    integer :: nef  !! error test failures in this step attempt
 
     ncf = 0
     nef = 0
@@ -1749,7 +1765,7 @@
 
     subroutine cvAdjustParams(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     if (me%qprime /= me%q) then
         ! [not yet ported] history resize: skip order adjustment after a resize
@@ -1770,8 +1786,8 @@
 
     subroutine cvAdjustOrder(me, deltaq)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: deltaq
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: deltaq  !! change in order: +1 or -1
 
     if ((me%q == 2) .and. (deltaq /= 1)) return
 
@@ -1790,11 +1806,11 @@
 
     subroutine cvAdjustAdams(me, deltaq)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: deltaq
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: deltaq  !! change in order: +1 or -1
 
-    integer :: i, j
-    real(wp) :: xi, hsum
+    integer :: i, j  !! loop indices
+    real(wp) :: xi, hsum  !! scaled step history (t_n - t_(n-j))/h and its running sum
 
     ! on an order increase, set new column of zn to zero and return
     if (deltaq == 1) then
@@ -1840,8 +1856,8 @@
 
     subroutine cvAdjustBDF(me, deltaq)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: deltaq
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: deltaq  !! change in order: +1 or -1
 
     select case (deltaq)
     case (1);  call cvIncreaseBDF(me)
@@ -1860,10 +1876,10 @@
 
     subroutine cvIncreaseBDF(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp) :: alpha0, alpha1, prod, xi, xiold, hsum, A1
-    integer :: i, j
+    real(wp) :: alpha0, alpha1, prod, xi, xiold, hsum, A1  !! coefficients and step history quantities of the order increase (see cvode.c)
+    integer :: i, j  !! loop indices
 
     do i = 0, me%qmax
         me%l(i) = ZERO
@@ -1905,10 +1921,10 @@
 
     subroutine cvDecreaseBDF(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp) :: hsum, xi
-    integer :: i, j
+    real(wp) :: hsum, xi  !! running sum of step sizes and its scaled value
+    integer :: i, j  !! loop indices
 
     do i = 0, me%qmax
         me%l(i) = ZERO
@@ -1939,10 +1955,10 @@
 
     subroutine cvRescale(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    integer :: j
-    real(wp) :: factor
+    integer :: j  !! column index of zn
+    real(wp) :: factor  !! eta**j
 
     ! zn(:,j) = eta**j * zn(:,j), j = 1..q
     factor = ONE
@@ -1969,9 +1985,9 @@
 
     subroutine cvPredict(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    integer :: j, k
+    integer :: j, k  !! loop indices
 
     me%tn = me%tn + me%h
     if (me%tstopset) then
@@ -1994,7 +2010,7 @@
 
     subroutine cvSet(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     select case (me%lmm)
     case (CV_ADAMS); call cvSetAdams(me)
@@ -2023,11 +2039,11 @@
 
     subroutine cvSetAdams(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp),dimension(0:L_MAX-1) :: m
-    real(wp),dimension(0:2) :: mm   ! C: M[3]
-    real(wp) :: hsum
+    real(wp),dimension(0:L_MAX-1) :: m  !! coefficients of the product polynomial (cvAdamsStart)
+    real(wp),dimension(0:2) :: mm  !! alternating sums M[0..2] (C: M[3], renamed)
+    real(wp) :: hsum  !! sum of the last q step sizes
 
     if (me%q == 1) then
         me%l(0)  = ONE
@@ -2057,12 +2073,12 @@
 
     function cvAdamsStart(me, m) result(hsum)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(0:L_MAX-1),intent(inout) :: m
-    real(wp) :: hsum
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(0:L_MAX-1),intent(inout) :: m  !! coefficients of the product polynomial (output)
+    real(wp) :: hsum  !! sum of the step sizes (result)
 
-    real(wp) :: xi_inv, sum
-    integer :: i, j
+    real(wp) :: xi_inv, sum  !! h/hsum and an alternating sum
+    integer :: i, j  !! loop indices
 
     hsum = me%h
     m(0) = ONE
@@ -2091,13 +2107,13 @@
 
     subroutine cvAdamsFinish(me, m, mm, hsum)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(0:L_MAX-1),intent(inout) :: m
-    real(wp),dimension(0:2),intent(inout) :: mm
-    real(wp),intent(in) :: hsum
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(0:L_MAX-1),intent(inout) :: m  !! coefficients of the product polynomial
+    real(wp),dimension(0:2),intent(inout) :: mm  !! alternating sums M[0..2]
+    real(wp),intent(in) :: hsum  !! sum of the step sizes
 
-    integer :: i
-    real(wp) :: M0_inv, xi, xi_inv
+    integer :: i  !! loop index
+    real(wp) :: M0_inv, xi, xi_inv  !! 1/M[0], hsum/h and its inverse
 
     M0_inv = ONE / mm(0)
 
@@ -2132,12 +2148,12 @@
 
     pure function cvAltSum(iend, a, k) result(sum)
 
-    integer,intent(in) :: iend
-    real(wp),dimension(0:),intent(in) :: a
-    integer,intent(in) :: k
-    real(wp) :: sum
+    integer,intent(in) :: iend  !! last index of the sum
+    real(wp),dimension(0:),intent(in) :: a  !! terms a(0:iend)
+    integer,intent(in) :: k  !! offset in the denominators
+    real(wp) :: sum  !! the alternating sum
 
-    integer :: i, sgn
+    integer :: i, sgn  !! loop index and the sign (+1/-1)
 
     if (iend < 0) then
         sum = ZERO
@@ -2169,10 +2185,10 @@
 
     subroutine cvSetBDF(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp) :: alpha0, alpha0_hat, xi_inv, xistar_inv, hsum
-    integer :: i, j
+    real(wp) :: alpha0, alpha0_hat, xi_inv, xistar_inv, hsum  !! BDF coefficient quantities (see cvode.c) and the sum of step sizes
+    integer :: i, j  !! loop indices
 
     me%l(0)    = ONE
     me%l(1)    = ONE
@@ -2221,16 +2237,16 @@
 
     subroutine cvSetTqBDF(me, hsum, alpha0, alpha0_hat, xi_inv, xistar_inv)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: hsum
-    real(wp),intent(in) :: alpha0
-    real(wp),intent(in) :: alpha0_hat
-    real(wp),intent(in) :: xi_inv
-    real(wp),intent(in) :: xistar_inv
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: hsum  !! sum of the step sizes
+    real(wp),intent(in) :: alpha0  !! alpha_0 of the BDF formula
+    real(wp),intent(in) :: alpha0_hat  !! alpha_0 hat
+    real(wp),intent(in) :: xi_inv  !! h / hsum
+    real(wp),intent(in) :: xistar_inv  !! 1 / xi*
 
-    real(wp) :: A1, A2, A3, A4, A5, A6
-    real(wp) :: C, Cpinv, Cppinv
-    real(wp) :: hsum_, xi_inv_   ! C modifies its by-value copies
+    real(wp) :: A1, A2, A3, A4, A5, A6  !! intermediate quantities (as in C)
+    real(wp) :: C, Cpinv, Cppinv  !! error constants (as in C)
+    real(wp) :: hsum_, xi_inv_  !! C modifies its by-value copies
 
     hsum_   = hsum
     xi_inv_ = xi_inv
@@ -2268,12 +2284,12 @@
 
     function cvNls(me, nflag) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: nflag
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: nflag  !! `FIRST_CALL`, `PREV_CONV_FAIL` or `PREV_ERR_FAIL`
+    integer :: flag  !! `CV_SUCCESS` or a nonlinear solver failure flag
 
-    logical :: callSetup
-    integer(li) :: nni_inc, nnf_inc
+    logical :: callSetup  !! call the linear solver setup in this solve?
+    integer(li) :: nni_inc, nnf_inc  !! nonlinear iterations and failures in this solve
 
     flag    = CV_SUCCESS
     nni_inc = 0
@@ -2345,11 +2361,11 @@
 
     function cvHandleNFlag(me, nflag, saved_t, ncf) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(inout) :: nflag
-    real(wp),intent(in) :: saved_t
-    integer,intent(inout) :: ncf
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(inout) :: nflag  !! cvNls return flag on input; `PREV_CONV_FAIL` on a retry
+    real(wp),intent(in) :: saved_t  !! time at the start of the step
+    integer,intent(inout) :: ncf  !! number of convergence failures in this step
+    integer :: flag  !! `DO_ERROR_TEST`, `PREDICT_AGAIN`, or a failure flag
 
     if (nflag == CV_SUCCESS) then
         flag = DO_ERROR_TEST
@@ -2409,10 +2425,10 @@
 
     subroutine cvRestore(me, saved_t)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: saved_t
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: saved_t  !! time at the start of the step
 
-    integer :: j, k
+    integer :: j, k  !! loop indices
 
     me%tn = saved_t
     do k = 1, me%q
@@ -2435,14 +2451,14 @@
 
     function cvDoErrorTest(me, nflag, saved_t, nef, dsm) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(inout) :: nflag
-    real(wp),intent(in) :: saved_t
-    integer,intent(inout) :: nef
-    real(wp),intent(out) :: dsm
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(inout) :: nflag  !! set to `PREV_ERR_FAIL` on failure
+    real(wp),intent(in) :: saved_t  !! time at the start of the step
+    integer,intent(inout) :: nef  !! number of error test failures in this step
+    real(wp),intent(out) :: dsm  !! weighted local error norm (output)
+    integer :: flag  !! `CV_SUCCESS`, `TRY_AGAIN`, or a failure flag
 
-    integer :: retval
+    integer :: retval  !! return flag of f
 
     dsm = me%acnrm * me%tq(2)
 
@@ -2530,9 +2546,9 @@
 
     subroutine cvCompleteStep(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    integer :: i, j
+    integer :: i, j  !! loop indices
 
     me%nst   = me%nst + 1
     me%nscon = me%nscon + 1
@@ -2571,8 +2587,8 @@
 
     subroutine cvPrepareNextStep(me, dsm)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: dsm
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: dsm  !! weighted local error norm of the step
 
     ! if etamax = 1, defer step size or order changes
     if (me%etamax == ONE) then
@@ -2613,7 +2629,7 @@
 
     subroutine cvSetEta(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     ! if eta below the threshold THRESH, reject a change of step size
     if ((me%eta > me%eta_min_fx) .and. (me%eta < me%eta_max_fx)) then
@@ -2646,10 +2662,10 @@
 
     function cvComputeEtaqm1(me) result(etaqm1)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp) :: etaqm1
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp) :: etaqm1  !! step size ratio for order q-1
 
-    real(wp) :: ddn
+    real(wp) :: ddn  !! error norm at order q-1
 
     me%etaqm1 = ZERO
     if (me%q > 1) then
@@ -2668,10 +2684,10 @@
 
     function cvComputeEtaqp1(me) result(etaqp1)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp) :: etaqp1
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp) :: etaqp1  !! step size ratio for order q+1
 
-    real(wp) :: dup, cquot
+    real(wp) :: dup, cquot  !! error norm at order q+1 and the correction factor
 
     me%etaqp1 = ZERO
     if (me%q /= me%qmax) then
@@ -2702,9 +2718,9 @@
 
     subroutine cvChooseEta(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp) :: etam
+    real(wp) :: etam  !! largest of etaqm1, etaq, etaqp1
 
     etam = max(me%etaqm1, max(me%etaq, me%etaqp1))
 
@@ -2742,11 +2758,11 @@
 
     function cvHandleFailure(me, flag) result(istate)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: flag
-    integer :: istate
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: flag  !! the failure flag
+    integer :: istate  !! the flag returned to the user
 
-    character(len=*),parameter :: fn = 'CVode'
+    character(len=*),parameter :: fn = 'CVode'  !! function name in the messages
 
     ! set vector of absolute weighted local errors
     ! (not done here: CVODE computes it in CVodeGetErrWeights / GetEstLocalErrors)
@@ -2824,10 +2840,10 @@
 
     function cvEwtSet(me, ycur, weight) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycur
-    real(wp),dimension(:),intent(inout) :: weight
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycur  !! current state vector
+    real(wp),dimension(:),intent(inout) :: weight  !! error weights (output)
+    integer :: flag  !! 0 on success, nonzero if a weight would be <= 0
 
     flag = 0
 
@@ -2850,10 +2866,10 @@
 
     function cvEwtSetSS(me, ycur, weight) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycur
-    real(wp),dimension(:),intent(inout) :: weight
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycur  !! current state vector
+    real(wp),dimension(:),intent(inout) :: weight  !! error weights (output)
+    integer :: flag  !! 0 on success, -1 if a weight would be <= 0
 
     me%tempv = abs(ycur)
     me%tempv = me%reltol*me%tempv
@@ -2877,10 +2893,10 @@
 
     function cvEwtSetSV(me, ycur, weight) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycur
-    real(wp),dimension(:),intent(inout) :: weight
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycur  !! current state vector
+    real(wp),dimension(:),intent(inout) :: weight  !! error weights (output)
+    integer :: flag  !! 0 on success, -1 if a weight would be <= 0
 
     me%tempv = abs(ycur)
     me%tempv = me%reltol*me%tempv + me%Vabstol
@@ -2905,10 +2921,10 @@
 
     subroutine cvProcessError(me, error_code, func, msg)
 
-    class(cvode_solver),intent(in) :: me
-    integer,intent(in) :: error_code
-    character(len=*),intent(in) :: func
-    character(len=*),intent(in) :: msg
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver (for the message settings)
+    integer,intent(in) :: error_code  !! the error (or `CV_WARNING`) code
+    character(len=*),intent(in) :: func  !! name of the reporting function
+    character(len=*),intent(in) :: msg  !! the message
 
     if (.not. me%print_errors) return
 
@@ -2933,9 +2949,9 @@
 
     subroutine CVodeSetNonlinearSolver(me, NLS, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    class(sun_nonlinear_solver),intent(in) :: NLS
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    class(sun_nonlinear_solver),intent(in) :: NLS  !! the nonlinear solver (copied)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeSetNonlinearSolver', &
@@ -2956,11 +2972,11 @@
 
     subroutine CVodeSetNonlinearSolverInternal(me, NLS, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    class(sun_nonlinear_solver),intent(in) :: NLS
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    class(sun_nonlinear_solver),intent(in) :: NLS  !! the nonlinear solver (copied)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    integer :: retval, itype
+    integer :: retval, itype  !! return flag and the solver type
 
     itype = NLS%get_type()
     if (itype /= SUNNONLINEARSOLVER_ROOTFIND .and. &
@@ -3001,10 +3017,10 @@
 
     function cvNlsInit(me) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer :: flag  !! `CV_SUCCESS` or `CV_NLS_INIT_FAIL`
 
-    integer :: retval
+    integer :: retval  !! return flag of the solver's initialize
 
     ! set the linear solver setup / solve wrappers (if they exist)
     me%NLS%has_lsetup = me%lsetup_exists
@@ -3032,10 +3048,10 @@
 
     function cvNlsSys(me, ycor, res) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycor
-    real(wp),dimension(:),intent(inout) :: res
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycor  !! correction to the predictor
+    real(wp),dimension(:),intent(inout) :: res  !! nonlinear system function value (output)
+    integer :: flag  !! `CV_SUCCESS`, `RHSFUNC_RECVR` or `CV_RHSFUNC_FAIL`
 
     if (me%NLS%get_type() == SUNNONLINEARSOLVER_FIXEDPOINT) then
         flag = cvNlsFPFunction(me, ycor, res)
@@ -3052,12 +3068,12 @@
 
     function cvNlsResidual(me, ycor, res) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycor
-    real(wp),dimension(:),intent(inout) :: res
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycor  !! correction to the predictor
+    real(wp),dimension(:),intent(inout) :: res  !! residual (output)
+    integer :: flag  !! `CV_SUCCESS`, `RHSFUNC_RECVR` or `CV_RHSFUNC_FAIL`
 
-    integer :: retval
+    integer :: retval  !! return flag of f
 
     ! update the state based on the current correction
     me%y = me%zn(:,0) + ycor
@@ -3089,12 +3105,12 @@
 
     function cvNlsFPFunction(me, ycor, res) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ycor
-    real(wp),dimension(:),intent(inout) :: res
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ycor  !! correction to the predictor
+    real(wp),dimension(:),intent(inout) :: res  !! fixed-point function value (output)
+    integer :: flag  !! `CV_SUCCESS`, `RHSFUNC_RECVR` or `CV_RHSFUNC_FAIL`
 
-    integer :: retval
+    integer :: retval  !! return flag of f
 
     ! update the state based on the current correction
     me%y = me%zn(:,0) + ycor
@@ -3125,12 +3141,12 @@
 
     function cvNlsLSetup(me, jbad, jcur) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    logical,intent(in) :: jbad
-    logical,intent(out) :: jcur
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    logical,intent(in) :: jbad  !! `.true.` if the nonlinear solver suspects a bad Jacobian
+    logical,intent(out) :: jcur  !! `.true.` if the Jacobian is current (output)
+    integer :: flag  !! `CV_SUCCESS`, `SUN_NLS_CONV_RECVR` or `CV_LSETUP_FAIL`
 
-    integer :: retval
+    integer :: retval  !! return flag of the linear solver setup
 
     ! if the nonlinear solver marked the Jacobian as bad update convfail
     if (jbad) me%convfail = CV_FAIL_BAD_J
@@ -3169,11 +3185,11 @@
 
     function cvNlsLSolve(me, b) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(inout) :: b
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(inout) :: b  !! right-hand side on input, Newton update on output
+    integer :: flag  !! `CV_SUCCESS`, `SUN_NLS_CONV_RECVR` or `CV_LSOLVE_FAIL`
 
-    integer :: retval
+    integer :: retval  !! return flag of the linear solve
 
     select case (me%ls_kind)
     case (LS_GENERIC); retval = cvLsSolve(me, b, me%ewt, me%y, me%ftemp)
@@ -3199,16 +3215,16 @@
 
     function cvNlsConvTest(me, nls, ycor, del, tol, ewt) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    class(sun_nonlinear_solver),intent(in) :: nls
-    real(wp),dimension(:),intent(in) :: ycor
-    real(wp),dimension(:),intent(in) :: del
-    real(wp),intent(in) :: tol
-    real(wp),dimension(:),intent(in) :: ewt
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    class(sun_nonlinear_solver),intent(in) :: nls  !! the nonlinear solver (for the iteration count)
+    real(wp),dimension(:),intent(in) :: ycor  !! current correction
+    real(wp),dimension(:),intent(in) :: del  !! last update
+    real(wp),intent(in) :: tol  !! convergence tolerance
+    real(wp),dimension(:),intent(in) :: ewt  !! error weights
+    integer :: flag  !! `CV_SUCCESS` (converged), `SUN_NLS_CONTINUE` or `SUN_NLS_CONV_RECVR`
 
-    integer :: m
-    real(wp) :: dcon
+    integer :: m  !! current iteration number
+    real(wp) :: dcon  !! convergence test quantity
 
     ! compute the norm of the correction
     me%delnrm = n_vwrmsnorm(del, ewt)   ! cvNlsNorm
@@ -3258,9 +3274,9 @@
 
     subroutine CVodeSetErrorOutput(me, print_errors, unit)
 
-    class(cvode_solver),intent(inout) :: me
-    logical,intent(in) :: print_errors
-    integer,intent(in),optional :: unit
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    logical,intent(in) :: print_errors  !! print error and warning messages?
+    integer,intent(in),optional :: unit  !! output unit (default: `error_unit`)
 
     me%print_errors = print_errors
     if (present(unit)) me%errunit = unit
@@ -3274,11 +3290,11 @@
 
     subroutine CVodeSetMaxOrd(me, maxord, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: maxord
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxord  !! maximum order (cannot exceed the value at creation)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    integer :: qmax_alloc
+    integer :: qmax_alloc  !! order used to allocate zn
 
     if (maxord <= 0) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetMaxOrd', 'maxord <= 0 illegal.')
@@ -3311,9 +3327,9 @@
 
     subroutine CVodeSetMaxNumSteps(me, mxsteps, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer(li),intent(in) :: mxsteps
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer(li),intent(in) :: mxsteps  !! max internal steps per call (0: default, < 0: no limit)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     ! passing mxsteps=0 sets the default. Passing mxsteps<0 disables the test.
     if (mxsteps == 0) then
@@ -3333,9 +3349,9 @@
 
     subroutine CVodeSetMaxHnilWarns(me, mxhnil, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: mxhnil
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: mxhnil  !! max number of 't + h = t' warnings
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     me%mxhnil = mxhnil
 
@@ -3350,9 +3366,9 @@
 
     subroutine CVodeSetInitStep(me, hin, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: hin
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: hin  !! initial step size (0: estimate it)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     me%hin = hin
 
@@ -3368,9 +3384,9 @@
 
     subroutine CVodeSetMinStep(me, hmin, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: hmin
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: hmin  !! minimum absolute step size (0: no limit)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (hmin < ZERO) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetMinStep', 'hmin < 0 illegal.')
@@ -3405,11 +3421,11 @@
 
     subroutine CVodeSetMaxStep(me, hmax, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: hmax
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: hmax  !! maximum absolute step size (0: no limit)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
-    real(wp) :: hmax_inv
+    real(wp) :: hmax_inv  !! 1/hmax
 
     if (hmax < ZERO) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetMaxStep', 'hmax < 0 illegal.')
@@ -3446,9 +3462,9 @@
 
     subroutine CVodeSetStopTime(me, tstop, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: tstop
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: tstop  !! stop time
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     ! If CVode was called at least once, test if tstop is legal
     ! (i.e. if it was not already passed).
@@ -3479,9 +3495,9 @@
 
     subroutine CVodeSetInterpolateStopTime(me, interp, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    logical,intent(in) :: interp
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    logical,intent(in) :: interp  !! interpolate the solution at tstop?
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     me%tstopinterp = interp
 
@@ -3496,8 +3512,8 @@
 
     subroutine CVodeClearStopTime(me, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     me%tstopset = .false.
 
@@ -3513,9 +3529,9 @@
 
     subroutine CVodeSetMaxErrTestFails(me, maxnef, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: maxnef
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxnef  !! max error test failures per step (<= 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (maxnef <= 0) then
         me%maxnef = MXNEF
@@ -3535,9 +3551,9 @@
 
     subroutine CVodeSetMaxConvFails(me, maxncf, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: maxncf
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxncf  !! max nonlinear convergence failures per step (<= 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (maxncf <= 0) then
         me%maxncf = MXNCF
@@ -3557,9 +3573,9 @@
 
     subroutine CVodeSetNonlinConvCoef(me, nlscoef, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: nlscoef
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: nlscoef  !! nonlinear convergence coefficient (<= 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (nlscoef <= ZERO) then
         me%nlscoef = CORTES
@@ -3578,9 +3594,9 @@
 
     subroutine CVodeSetMaxNonlinIters(me, maxcor, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: maxcor
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxcor  !! max nonlinear iterations per step
+    integer,intent(out) :: flag  !! `CV_SUCCESS`, `CV_MEM_FAIL`, or the solver's error flag
 
     if (.not. allocated(me%NLS)) then
         call cvProcessError(me, CV_MEM_FAIL, 'CVodeSetMaxNonlinIters', 'A memory request failed.')
@@ -3600,9 +3616,9 @@
 
     subroutine CVodeSetDeltaGammaMaxLSetup(me, dgmax_lsetup, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: dgmax_lsetup
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: dgmax_lsetup  !! gamma ratio threshold (< 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (dgmax_lsetup < ZERO) then
         me%dgmax_lsetup = DGMAX_LSETUP_DEFAULT
@@ -3621,9 +3637,9 @@
 
     subroutine CVodeSetLSetupFrequency(me, msbp, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer(li),intent(in) :: msbp
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer(li),intent(in) :: msbp  !! max steps between setups (0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (msbp < 0) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetLSetupFrequency', &
@@ -3649,10 +3665,10 @@
 
     subroutine CVodeSetEtaFixedStepBounds(me, eta_min_fx, eta_max_fx, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_min_fx
-    real(wp),intent(in) :: eta_max_fx
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_min_fx  !! lower bound, in [0, 1]
+    real(wp),intent(in) :: eta_max_fx  !! upper bound, >= 1
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_min_fx >= ZERO .and. eta_min_fx <= ONE) then
         me%eta_min_fx = eta_min_fx
@@ -3676,9 +3692,9 @@
 
     subroutine CVodeSetEtaMaxFirstStep(me, eta_max_fs, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_max_fs
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_max_fs  !! max step size ratio (> 1; else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_max_fs <= ONE) then
         me%eta_max_fs = ETA_MAX_FS_DEFAULT
@@ -3697,9 +3713,9 @@
 
     subroutine CVodeSetEtaMaxEarlyStep(me, eta_max_es, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_max_es
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_max_es  !! max step size ratio (> 1; else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_max_es <= ONE) then
         me%eta_max_es = ETA_MAX_ES_DEFAULT
@@ -3718,9 +3734,9 @@
 
     subroutine CVodeSetNumStepsEtaMaxEarlyStep(me, small_nst, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer(li),intent(in) :: small_nst
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer(li),intent(in) :: small_nst  !! number of early steps (< 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (small_nst < 0) then
         me%small_nst = SMALL_NST_DEFAULT
@@ -3739,9 +3755,9 @@
 
     subroutine CVodeSetEtaMax(me, eta_max_gs, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_max_gs
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_max_gs  !! max step size ratio (> 1; else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_max_gs <= ONE) then
         me%eta_max_gs = ETA_MAX_GS_DEFAULT
@@ -3760,9 +3776,9 @@
 
     subroutine CVodeSetEtaMin(me, eta_min, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_min
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_min  !! min step size ratio (in (0,1); else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_min <= ZERO .or. eta_min >= ONE) then
         me%eta_min = ETA_MIN_DEFAULT
@@ -3781,9 +3797,9 @@
 
     subroutine CVodeSetEtaMinErrFail(me, eta_min_ef, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_min_ef
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_min_ef  !! min step size ratio (in (0,1); else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_min_ef <= ZERO .or. eta_min_ef >= ONE) then
         me%eta_min_ef = ETA_MIN_EF_DEFAULT
@@ -3802,9 +3818,9 @@
 
     subroutine CVodeSetEtaMaxErrFail(me, eta_max_ef, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_max_ef
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_max_ef  !! max step size ratio (in (0,1); else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_max_ef <= ZERO .or. eta_max_ef >= ONE) then
         me%eta_max_ef = ETA_MAX_EF_DEFAULT
@@ -3823,9 +3839,9 @@
 
     subroutine CVodeSetNumFailsEtaMaxErrFail(me, small_nef, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: small_nef
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: small_nef  !! number of failures (< 0: default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (small_nef < 0) then
         me%small_nef = SMALL_NEF_DEFAULT
@@ -3844,9 +3860,9 @@
 
     subroutine CVodeSetEtaConvFail(me, eta_cf, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: eta_cf
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: eta_cf  !! step size ratio (in (0,1); else default)
+    integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     if (eta_cf <= ZERO .or. eta_cf >= ONE) then
         me%eta_cf = ETA_CF_DEFAULT
@@ -3862,177 +3878,227 @@
 !  Optional outputs (cvode_io.c)
 !=========================================================================================
 
+!>
+!  `CVodeGetNumSteps`: number of steps.
     pure integer(li) function CVodeGetNumSteps(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nst
     end function CVodeGetNumSteps
 
+!>
+!  `CVodeGetNumRhsEvals`: number of f evaluations.
     pure integer(li) function CVodeGetNumRhsEvals(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nfe
     end function CVodeGetNumRhsEvals
 
+!>
+!  `CVodeGetNumLinSolvSetups`: number of linear solver setups.
     pure integer(li) function CVodeGetNumLinSolvSetups(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nsetups
     end function CVodeGetNumLinSolvSetups
 
+!>
+!  `CVodeGetNumErrTestFails`: number of error test failures.
     pure integer(li) function CVodeGetNumErrTestFails(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%netf
     end function CVodeGetNumErrTestFails
 
+!>
+!  `CVodeGetLastOrder`: order used on the last step.
     pure integer function CVodeGetLastOrder(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%qu
     end function CVodeGetLastOrder
 
+!>
+!  `CVodeGetCurrentOrder`: order to be used on the next step.
     pure integer function CVodeGetCurrentOrder(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%next_q
     end function CVodeGetCurrentOrder
 
+!>
+!  `CVodeGetActualInitStep`: initial step size actually used.
     pure real(wp) function CVodeGetActualInitStep(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%h0u
     end function CVodeGetActualInitStep
 
+!>
+!  `CVodeGetLastStep`: last step size.
     pure real(wp) function CVodeGetLastStep(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%hu
     end function CVodeGetLastStep
 
+!>
+!  `CVodeGetCurrentStep`: step size to be used next.
     pure real(wp) function CVodeGetCurrentStep(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%next_h
     end function CVodeGetCurrentStep
 
+!>
+!  `CVodeGetCurrentTime`: current internal time.
     pure real(wp) function CVodeGetCurrentTime(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%tn
     end function CVodeGetCurrentTime
 
+!>
+!  `CVodeGetTolScaleFactor`: tolerance scale factor.
     pure real(wp) function CVodeGetTolScaleFactor(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%tolsf
     end function CVodeGetTolScaleFactor
 
+!>
+!  `CVodeGetNumNonlinSolvIters`: number of nonlinear iterations.
     pure integer(li) function CVodeGetNumNonlinSolvIters(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nni
     end function CVodeGetNumNonlinSolvIters
 
+!>
+!  `CVodeGetNumNonlinSolvConvFails`: number of nonlinear convergence failures.
     pure integer(li) function CVodeGetNumNonlinSolvConvFails(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nnf
     end function CVodeGetNumNonlinSolvConvFails
 
+!>
+!  `CVodeGetNumStepSolveFails`: number of failed steps due to nonlinear solver failures.
     pure integer(li) function CVodeGetNumStepSolveFails(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%ncfn
     end function CVodeGetNumStepSolveFails
 
     pure integer(li) function CVDiagGetNumRhsEvals(me) result(v)
     !! f evaluations for the diagonal Jacobian approximation
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%di_nfeDI
     end function CVDiagGetNumRhsEvals
 
+!>
+!  `CVDiagGetLastFlag`: last flag of the diagonal solver.
     pure integer function CVDiagGetLastFlag(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%di_last_flag
     end function CVDiagGetLastFlag
 
+!>
+!  `CVodeGetNumJacEvals`: number of Jacobian evaluations.
     pure integer(li) function CVodeGetNumJacEvals(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nje
     end function CVodeGetNumJacEvals
 
+!>
+!  `CVodeGetNumLinRhsEvals`: f evaluations in the linear solver interface.
     pure integer(li) function CVodeGetNumLinRhsEvals(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nfeDQ
     end function CVodeGetNumLinRhsEvals
 
+!>
+!  `CVodeGetNumLinIters`: number of linear iterations.
     pure integer(li) function CVodeGetNumLinIters(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nli
     end function CVodeGetNumLinIters
 
+!>
+!  `CVodeGetNumLinConvFails`: number of linear convergence failures.
     pure integer(li) function CVodeGetNumLinConvFails(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%ncfl
     end function CVodeGetNumLinConvFails
 
+!>
+!  `CVodeGetNumPrecEvals`: number of preconditioner setups.
     pure integer(li) function CVodeGetNumPrecEvals(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%npe
     end function CVodeGetNumPrecEvals
 
+!>
+!  `CVodeGetNumPrecSolves`: number of preconditioner solves.
     pure integer(li) function CVodeGetNumPrecSolves(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nps
     end function CVodeGetNumPrecSolves
 
+!>
+!  `CVodeGetLastLinFlag`: last linear solver flag.
     pure integer function CVodeGetLastLinFlag(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%ls_last_flag
     end function CVodeGetLastLinFlag
 
     pure real(wp) function CVodeGetJacTime(me) result(v)
     !! time at which the Jacobian was last evaluated
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%tnlj
     end function CVodeGetJacTime
 
     pure integer(li) function CVodeGetJacNumSteps(me) result(v)
     !! step number at which the Jacobian was last evaluated
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nstlj
     end function CVodeGetJacNumSteps
 
+!>
+!  `CVodeGetCurrentGamma`: current gamma.
     pure real(wp) function CVodeGetCurrentGamma(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%gamma
     end function CVodeGetCurrentGamma
 
+!>
+!  `CVodeGetNumStabLimOrderReds`: order reductions by STALD.
     pure integer(li) function CVodeGetNumStabLimOrderReds(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nor
     end function CVodeGetNumStabLimOrderReds
 
+!>
+!  `CVodeGetNumGEvals`: number of root function evaluations.
     pure integer(li) function CVodeGetNumGEvals(me) result(v)
-    class(cvode_solver),intent(in) :: me
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nge
     end function CVodeGetNumGEvals
 
     subroutine CVodeGetCurrentState(me, y)
     !! The current internal state vector (C returns a pointer to `cv_y`).
-    class(cvode_solver),intent(in) :: me
-    real(wp),dimension(:),intent(out) :: y
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(out) :: y  !! current internal state vector (output)
     y = me%y
     end subroutine CVodeGetCurrentState
 
     subroutine CVodeGetErrWeights(me, eweight)
     !! The error weight vector `ewt`.
-    class(cvode_solver),intent(in) :: me
-    real(wp),dimension(:),intent(out) :: eweight
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(out) :: eweight  !! error weight vector (output)
     eweight = me%ewt
     end subroutine CVodeGetErrWeights
 
     subroutine CVodeGetEstLocalErrors(me, ele)
     !! The estimated local errors of the last step.
-    class(cvode_solver),intent(in) :: me
-    real(wp),dimension(:),intent(out) :: ele
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(out) :: ele  !! estimated local errors (output)
     ele = me%acor
     end subroutine CVodeGetEstLocalErrors
 
     subroutine CVodeGetIntegratorStats(me, nsteps, nfevals, nlinsetups, netfails, &
                                        qlast, qcur, hinused, hlast, hcur, tcur)
     !! All main integrator statistics in one call.
-    class(cvode_solver),intent(in) :: me
-    integer(li),intent(out) :: nsteps, nfevals, nlinsetups, netfails
-    integer,intent(out) :: qlast, qcur
-    real(wp),intent(out) :: hinused, hlast, hcur, tcur
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    integer(li),intent(out) :: nsteps, nfevals, nlinsetups, netfails  !! steps, f evaluations, linear solver setups, error test failures
+    integer,intent(out) :: qlast, qcur  !! order used on the last step and to be used on the next
+    real(wp),intent(out) :: hinused, hlast, hcur, tcur  !! initial, last and next step sizes, and the current time
     nsteps     = me%nst
     nfevals    = me%nfe
     nlinsetups = me%nsetups
@@ -4047,8 +4113,8 @@
 
     subroutine CVodeGetNonlinSolvStats(me, nniters, nnfails)
     !! Nonlinear solver statistics.
-    class(cvode_solver),intent(in) :: me
-    integer(li),intent(out) :: nniters, nnfails
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    integer(li),intent(out) :: nniters, nnfails  !! nonlinear iterations and convergence failures
     nniters = me%nni
     nnfails = me%nnf
     end subroutine CVodeGetNonlinSolvStats
@@ -4061,10 +4127,10 @@
 
     subroutine CVodePrintAllStats(me, iunit, fmt, flag)
 
-    class(cvode_solver),intent(in) :: me
-    integer,intent(in) :: iunit
-    integer,intent(in) :: fmt
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    integer,intent(in) :: iunit  !! output unit
+    integer,intent(in) :: fmt  !! `SUN_OUTPUTFORMAT_TABLE` or `SUN_OUTPUTFORMAT_CSV`
+    integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_ILL_INPUT`
 
     if (fmt /= SUN_OUTPUTFORMAT_TABLE .and. fmt /= SUN_OUTPUTFORMAT_CSV) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodePrintAllStats', 'Invalid formatting option.')
@@ -4125,9 +4191,10 @@
     contains
 
         subroutine put_real(name, value, start)
-        character(len=*),intent(in) :: name
-        real(wp),intent(in) :: value
-        logical,intent(in),optional :: start
+        !! write a real statistic (table row or CSV item)
+        character(len=*),intent(in) :: name  !! statistic name
+        real(wp),intent(in) :: value  !! its value
+        logical,intent(in),optional :: start  !! first item of a CSV record?
         if (fmt == SUN_OUTPUTFORMAT_TABLE) then
             write(iunit, '(a," = ",a)') pad(name), g_str(value)
         else
@@ -4137,8 +4204,9 @@
         end subroutine put_real
 
         subroutine put_long(name, value)
-        character(len=*),intent(in) :: name
-        integer(li),intent(in) :: value
+        !! write an integer statistic (table row or CSV item)
+        character(len=*),intent(in) :: name  !! statistic name
+        integer(li),intent(in) :: value  !! its value
         if (fmt == SUN_OUTPUTFORMAT_TABLE) then
             write(iunit, '(a," = ",i0)') pad(name), value
         else
@@ -4148,8 +4216,8 @@
 
         function pad(name) result(s)
         !! left-justified in SUN_TABLE_WIDTH = 29 characters
-        character(len=*),intent(in) :: name
-        character(len=max(29, len(name))) :: s
+        character(len=*),intent(in) :: name  !! text to pad
+        character(len=max(29, len(name))) :: s  !! the text, left-justified in 29 characters
         s = name
         end function pad
 
@@ -4165,8 +4233,8 @@
 
     function CVodeGetReturnFlagName(flag) result(name)
 
-    integer,intent(in) :: flag
-    character(len=:),allocatable :: name
+    integer,intent(in) :: flag  !! a CVODE return flag
+    character(len=:),allocatable :: name  !! its name, or 'NONE'
 
     select case (flag)
     case (CV_SUCCESS);            name = 'CV_SUCCESS'
@@ -4210,25 +4278,25 @@
 
     function g_str(x) result(s)
     !! A real formatted with 15 significant digits.
-    real(wp),intent(in) :: x
-    character(len=:),allocatable :: s
-    character(len=32) :: buf
+    real(wp),intent(in) :: x  !! value to format
+    character(len=:),allocatable :: s  !! formatted value
+    character(len=32) :: buf  !! write buffer
     write(buf, '(es22.15)') x
     s = trim(adjustl(buf))
     end function g_str
 
     function t_str(t) result(s)
     !! `MSG_TIME`: "t = <t>"
-    real(wp),intent(in) :: t
-    character(len=:),allocatable :: s
+    real(wp),intent(in) :: t  !! time value
+    character(len=:),allocatable :: s  !! "t = <t>"
     s = 't = '//g_str(t)
     end function t_str
 
     function th_str(t, h) result(s)
     !! `MSG_TIME_H`: "t = <t> and h = <h>"
-    real(wp),intent(in) :: t
-    real(wp),intent(in) :: h
-    character(len=:),allocatable :: s
+    real(wp),intent(in) :: t  !! time value
+    real(wp),intent(in) :: h  !! step size
+    character(len=:),allocatable :: s  !! "t = <t> and h = <h>"
     s = 't = '//g_str(t)//' and h = '//g_str(h)
     end function th_str
 

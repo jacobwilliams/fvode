@@ -51,29 +51,29 @@
             !! Evaluate the nonlinear system at the correction `ycor`.
             import :: nls_problem, wp
             implicit none
-            class(nls_problem),intent(inout) :: me
-            real(wp),dimension(:),intent(in) :: ycor
-            real(wp),dimension(:),intent(inout) :: res
-            integer :: flag
+            class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+            real(wp),dimension(:),intent(in) :: ycor  !! current correction to the predictor
+            real(wp),dimension(:),intent(inout) :: res  !! system function value (residual or G(ycor))
+            integer :: flag  !! return flag (0 on success)
         end function nls_sys_fn
 
         function nls_lsetup_fn(me, jbad, jcur) result(flag)
             !! Set up the linear solver (Newton only).
             import :: nls_problem
             implicit none
-            class(nls_problem),intent(inout) :: me
-            logical,intent(in) :: jbad
-            logical,intent(out) :: jcur
-            integer :: flag
+            class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+            logical,intent(in) :: jbad  !! the solver suspects the Jacobian is out of date
+            logical,intent(out) :: jcur  !! the Jacobian was re-evaluated (is current)
+            integer :: flag  !! return flag (0 on success)
         end function nls_lsetup_fn
 
         function nls_lsolve_fn(me, b) result(flag)
             !! Solve the linear system, overwriting `b` (Newton only).
             import :: nls_problem, wp
             implicit none
-            class(nls_problem),intent(inout) :: me
-            real(wp),dimension(:),intent(inout) :: b
-            integer :: flag
+            class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+            real(wp),dimension(:),intent(inout) :: b  !! right-hand side on input, solution on output
+            integer :: flag  !! return flag (0 on success)
         end function nls_lsolve_fn
 
         function nls_convtest_fn(me, nls, ycor, del, tol, ewt) result(flag)
@@ -81,19 +81,20 @@
             !! `SUN_NLS_CONV_RECVR`, or a negative failure code.
             import :: nls_problem, sun_nonlinear_solver, wp
             implicit none
-            class(nls_problem),intent(inout) :: me
-            class(sun_nonlinear_solver),intent(in) :: nls
-            real(wp),dimension(:),intent(in) :: ycor
-            real(wp),dimension(:),intent(in) :: del
-            real(wp),intent(in) :: tol
-            real(wp),dimension(:),intent(in) :: ewt
-            integer :: flag
+            class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+            class(sun_nonlinear_solver),intent(in) :: nls  !! the nonlinear solver (to query the iteration count)
+            real(wp),dimension(:),intent(in) :: ycor  !! current correction
+            real(wp),dimension(:),intent(in) :: del  !! last update to the correction
+            real(wp),intent(in) :: tol  !! convergence tolerance
+            real(wp),dimension(:),intent(in) :: ewt  !! error weights for the norm
+            integer :: flag  !! return flag (0 on success)
         end function nls_convtest_fn
 
         function nls_gettype_fn(me) result(itype)
+        !! Solver type (`SUNNonlinSolGetType`).
             import :: sun_nonlinear_solver
             implicit none
-            class(sun_nonlinear_solver),intent(in) :: me
+            class(sun_nonlinear_solver),intent(in) :: me  !! the nonlinear solver
             integer :: itype   !! `SUNNONLINEARSOLVER_ROOTFIND` / `_FIXEDPOINT` / `_HYBRID`
         end function nls_gettype_fn
 
@@ -102,8 +103,8 @@
             !! by the constructor, as in C.
             import :: sun_nonlinear_solver
             implicit none
-            class(sun_nonlinear_solver),intent(inout) :: me
-            integer :: flag
+            class(sun_nonlinear_solver),intent(inout) :: me  !! the nonlinear solver
+            integer :: flag  !! return flag (0 on success)
         end function nls_initialize_fn
 
         function nls_solve_fn(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
@@ -111,36 +112,39 @@
             !! correction `ycor` relative to the predictor `y0`.
             import :: sun_nonlinear_solver, nls_problem, wp
             implicit none
-            class(sun_nonlinear_solver),intent(inout) :: me
-            class(nls_problem),intent(inout) :: prob
-            real(wp),dimension(:),intent(in) :: y0
-            real(wp),dimension(:),intent(inout) :: ycor
-            real(wp),dimension(:),intent(in) :: w
-            real(wp),intent(in) :: tol
-            logical,intent(in) :: call_lsetup
-            integer :: flag
+            class(sun_nonlinear_solver),intent(inout) :: me  !! the nonlinear solver
+            class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
+            real(wp),dimension(:),intent(in) :: y0  !! predicted solution
+            real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
+            real(wp),dimension(:),intent(in) :: w  !! error weights
+            real(wp),intent(in) :: tol  !! convergence tolerance
+            logical,intent(in) :: call_lsetup  !! set up the linear solver before iterating
+            integer :: flag  !! return flag (0 on success)
         end function nls_solve_fn
 
         function nls_setmaxiters_fn(me, maxiters) result(flag)
+        !! Set the maximum number of iterations per solve.
             import :: sun_nonlinear_solver
             implicit none
-            class(sun_nonlinear_solver),intent(inout) :: me
-            integer,intent(in) :: maxiters
-            integer :: flag
+            class(sun_nonlinear_solver),intent(inout) :: me  !! the nonlinear solver
+            integer,intent(in) :: maxiters  !! maximum iterations per solve (>= 1)
+            integer :: flag  !! return flag (0 on success)
         end function nls_setmaxiters_fn
 
         function nls_getlong_fn(me) result(val)
+        !! Get a counter (number of iterations or convergence failures).
             import :: sun_nonlinear_solver, li
             implicit none
-            class(sun_nonlinear_solver),intent(in) :: me
-            integer(li) :: val
+            class(sun_nonlinear_solver),intent(in) :: me  !! the nonlinear solver
+            integer(li) :: val  !! the counter value
         end function nls_getlong_fn
 
         function nls_getint_fn(me) result(val)
+        !! Get the current iteration number.
             import :: sun_nonlinear_solver
             implicit none
-            class(sun_nonlinear_solver),intent(in) :: me
-            integer :: val
+            class(sun_nonlinear_solver),intent(in) :: me  !! the nonlinear solver
+            integer :: val  !! the counter value
         end function nls_getint_fn
 
     end interface
@@ -155,10 +159,10 @@
 
     function nls_setup_default(me, prob, y) result(flag)
 
-    class(sun_nonlinear_solver),intent(inout) :: me
-    class(nls_problem),intent(inout) :: prob
-    real(wp),dimension(:),intent(in) :: y
-    integer :: flag
+    class(sun_nonlinear_solver),intent(inout) :: me  !! the nonlinear solver
+    class(nls_problem),intent(inout) :: prob  !! the problem (unused)
+    real(wp),dimension(:),intent(in) :: y  !! initial guess (unused)
+    integer :: flag  !! return flag (0 on success)
 
     flag = 0
 

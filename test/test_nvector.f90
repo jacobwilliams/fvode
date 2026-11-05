@@ -15,7 +15,7 @@
 
     public :: collect_nvector
 
-    real(wp),parameter :: tol = 1.0e-14_wp
+    real(wp),parameter :: tol = 1.0e-14_wp  !! relative tolerance for the comparisons
 
     contains
 !*****************************************************************************************
@@ -26,7 +26,7 @@
 
     subroutine collect_nvector(testsuite)
 
-    type(unittest_type),allocatable,intent(out) :: testsuite(:)
+    type(unittest_type),allocatable,intent(out) :: testsuite(:)  !! the unit tests of this suite
 
     testsuite = [ new_unittest("wrmsnorm",    test_wrmsnorm),    &
                   new_unittest("invtest",     test_invtest),     &
@@ -38,8 +38,9 @@
 
 !*****************************************************************************************
     subroutine test_wrmsnorm(error)
+    !! test the weighted RMS norm
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
     ! sqrt(((1*2)**2 + (-3*1)**2 + (4*0.5)**2) / 3) = sqrt(17/3)
     call check(error, n_vwrmsnorm([1.0_wp, -3.0_wp, 4.0_wp], [2.0_wp, 1.0_wp, 0.5_wp]), &
@@ -50,11 +51,12 @@
 
 !*****************************************************************************************
     subroutine test_invtest(error)
+    !! test n_vinvtest with and without zero components
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    real(wp),dimension(3) :: z
-    logical :: ok
+    real(wp),dimension(3) :: z  !! inverse vector (output)
+    logical :: ok  !! result of the test
 
     z = -7.0_wp
     ok = n_vinvtest([2.0_wp, 0.0_wp, -4.0_wp], z)
@@ -71,18 +73,19 @@
 
 !*****************************************************************************************
     subroutine test_constrmask(error)
+    !! test n_vconstrmask for all constraint types
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
     !                        none  >=0   >=0   <=0   >0    >0    <0    <0
     real(wp),dimension(8),parameter :: c = [0.0_wp, 1.0_wp, 1.0_wp, -1.0_wp, &
-                                            2.0_wp, 2.0_wp, -2.0_wp, -2.0_wp]
+                                            2.0_wp, 2.0_wp, -2.0_wp, -2.0_wp]  !! constraints: 0 none, 1 >= 0, -1 <= 0, 2 > 0, -2 < 0
     real(wp),dimension(8),parameter :: x = [-5.0_wp, 0.0_wp, -1.0_wp, 0.0_wp, &
-                                            1.0_wp, 0.0_wp, -1.0_wp, 0.0_wp]
+                                            1.0_wp, 0.0_wp, -1.0_wp, 0.0_wp]  !! test vector, violating some constraints
     real(wp),dimension(8),parameter :: expected = [0.0_wp, 0.0_wp, 1.0_wp, 0.0_wp, &
-                                                   0.0_wp, 1.0_wp, 0.0_wp, 1.0_wp]
-    real(wp),dimension(8) :: m
-    logical :: ok
+                                                   0.0_wp, 1.0_wp, 0.0_wp, 1.0_wp]  !! expected mask (1 where a constraint is violated)
+    real(wp),dimension(8) :: m  !! computed mask
+    logical :: ok  !! result: all constraints satisfied?
 
     ok = n_vconstrmask(c, x, m)
     call check(error, .not. ok, 'violation not detected');      if (allocated(error)) return
@@ -100,8 +103,9 @@
 
 !*****************************************************************************************
     subroutine test_minquotient(error)
+    !! test n_vminquotient, including the all-zero denominator case
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
     call check(error, n_vminquotient([1.0_wp, 5.0_wp, -3.0_wp], [2.0_wp, 0.0_wp, 1.0_wp]), &
                -3.0_wp)

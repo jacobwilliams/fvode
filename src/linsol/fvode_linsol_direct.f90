@@ -25,18 +25,18 @@
         !! Dense LU solver (`SUNLinSol_Dense`).
         integer(ip),dimension(:),allocatable :: pivots  !! row pivots, 1-based
     contains
-        procedure :: get_type => dense_get_type
-        procedure :: setup    => dense_setup
-        procedure :: solve    => dense_solve
+        procedure :: get_type => dense_get_type  !! `SUNLinSolGetType_Dense`: direct solver
+        procedure :: setup    => dense_setup  !! `SUNLinSolSetup_Dense`: LU factorization
+        procedure :: solve    => dense_solve  !! `SUNLinSolSolve_Dense`: solve with the LU factors
     end type sun_linsol_dense
 
     type,extends(sun_linear_solver),public :: sun_linsol_band
         !! Band LU solver (`SUNLinSol_Band`).
         integer(ip),dimension(:),allocatable :: pivots  !! row pivots, 0-based (as in C)
     contains
-        procedure :: get_type => band_get_type
-        procedure :: setup    => band_setup
-        procedure :: solve    => band_solve
+        procedure :: get_type => band_get_type  !! `SUNLinSolGetType_Band`: direct solver
+        procedure :: setup    => band_setup  !! `SUNLinSolSetup_Band`: band LU factorization
+        procedure :: solve    => band_solve  !! `SUNLinSolSolve_Band`: solve with the LU factors
     end type sun_linsol_band
 
     interface sun_linsol_dense
@@ -54,27 +54,29 @@
 
     function dense_create(n) result(S)
     !! `SUNLinSol_Dense(y, A)` for an n x n system.
-    integer(ip),intent(in) :: n
-    type(sun_linsol_dense) :: S
+    integer(ip),intent(in) :: n  !! number of equations
+    type(sun_linsol_dense) :: S  !! the new solver
     allocate(S%pivots(n), source=0_ip)
     end function dense_create
 
     function band_create(n) result(S)
     !! `SUNLinSol_Band(y, A)` for an n x n system.
-    integer(ip),intent(in) :: n
-    type(sun_linsol_band) :: S
+    integer(ip),intent(in) :: n  !! number of equations
+    type(sun_linsol_band) :: S  !! the new solver
     allocate(S%pivots(0:n-1), source=0_ip)
     end function band_create
 
     pure function dense_get_type(me) result(itype)
-    class(sun_linsol_dense),intent(in) :: me
-    integer :: itype
+    !! `SUNLinSolGetType_Dense`
+    class(sun_linsol_dense),intent(in) :: me  !! the linear solver
+    integer :: itype  !! `SUNLINEARSOLVER_DIRECT`
     itype = SUNLINEARSOLVER_DIRECT
     end function dense_get_type
 
     pure function band_get_type(me) result(itype)
-    class(sun_linsol_band),intent(in) :: me
-    integer :: itype
+    !! `SUNLinSolGetType_Band`
+    class(sun_linsol_band),intent(in) :: me  !! the linear solver
+    integer :: itype  !! `SUNLINEARSOLVER_DIRECT`
     itype = SUNLINEARSOLVER_DIRECT
     end function band_get_type
 
@@ -84,9 +86,9 @@
 
     function dense_setup(me, A) result(flag)
 
-    class(sun_linsol_dense),intent(inout) :: me
-    class(sun_matrix),intent(inout) :: A
-    integer :: flag
+    class(sun_linsol_dense),intent(inout) :: me  !! the linear solver (stores the pivots)
+    class(sun_matrix),intent(inout) :: A  !! a `dense_matrix`, overwritten by its LU factors
+    integer :: flag  !! `SUN_SUCCESS`, `SUNLS_LUFACT_FAIL` (zero pivot), or < 0
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
     select type (A)
@@ -109,12 +111,12 @@
 
     function dense_solve(me, A, x, b, tol) result(flag)
 
-    class(sun_linsol_dense),intent(inout) :: me
-    class(sun_matrix),intent(inout) :: A
-    real(wp),dimension(:),intent(inout) :: x
-    real(wp),dimension(:),intent(in) :: b
-    real(wp),intent(in) :: tol
-    integer :: flag
+    class(sun_linsol_dense),intent(inout) :: me  !! the solver (pivots from `setup`)
+    class(sun_matrix),intent(inout) :: A  !! the LU factors from `setup` (a `dense_matrix`)
+    real(wp),dimension(:),intent(inout) :: x  !! the solution x
+    real(wp),dimension(:),intent(in) :: b  !! the right-hand side b
+    real(wp),intent(in) :: tol  !! tolerance (unused by direct solvers)
+    integer :: flag  !! `SUN_SUCCESS` or `SUN_ERR_ARG_INCOMPATIBLE`
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
     select type (A)
@@ -137,13 +139,13 @@
 
     function dense_getrf(a, p) result(info)
 
-    real(wp),dimension(:,:),intent(inout) :: a
-    integer(ip),dimension(:),intent(out) :: p
-    integer(ip) :: info
+    real(wp),dimension(:,:),intent(inout) :: a  !! in: the m x n matrix; out: its LU factors
+    integer(ip),dimension(:),intent(out) :: p  !! pivot rows: row k was swapped with row `p(k)`
+    integer(ip) :: info  !! 0 on success, k if the k-th pivot is zero
 
-    integer(ip) :: i, j, k, l, m, n
-    real(wp) :: mult, a_kj
-    real(wp),dimension(size(a,2)) :: temp
+    integer(ip) :: i, j, k, l, m, n  !! row, column and step indices, pivot row, matrix dimensions
+    real(wp) :: mult, a_kj  !! row multiplier 1/a(k,k), and the element a(k,j)
+    real(wp),dimension(size(a,2)) :: temp  !! temporary row for swapping
 
     m = size(a, 1)
     n = size(a, 2)
@@ -200,12 +202,12 @@
 
     subroutine dense_getrs(a, p, b)
 
-    real(wp),dimension(:,:),intent(in) :: a
-    integer(ip),dimension(:),intent(in) :: p
-    real(wp),dimension(:),intent(inout) :: b
+    real(wp),dimension(:,:),intent(in) :: a  !! the LU factors from `dense_getrf`
+    integer(ip),dimension(:),intent(in) :: p  !! the pivots from `dense_getrf`
+    real(wp),dimension(:),intent(inout) :: b  !! on input the right-hand side b, on output the solution x
 
-    integer(ip) :: k, n, pk
-    real(wp) :: tmp
+    integer(ip) :: k, n, pk  !! step index, matrix dimension, pivot row
+    real(wp) :: tmp  !! temporary for swapping
 
     n = size(a, 2)
 
@@ -240,9 +242,9 @@
 
     function band_setup(me, A) result(flag)
 
-    class(sun_linsol_band),intent(inout) :: me
-    class(sun_matrix),intent(inout) :: A
-    integer :: flag
+    class(sun_linsol_band),intent(inout) :: me  !! the linear solver (stores the pivots)
+    class(sun_matrix),intent(inout) :: A  !! a `band_matrix`, overwritten by its LU factors
+    integer :: flag  !! `SUN_SUCCESS`, `SUNLS_LUFACT_FAIL` (zero pivot), or < 0
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
     select type (A)
@@ -267,12 +269,12 @@
 
     function band_solve(me, A, x, b, tol) result(flag)
 
-    class(sun_linsol_band),intent(inout) :: me
-    class(sun_matrix),intent(inout) :: A
-    real(wp),dimension(:),intent(inout) :: x
-    real(wp),dimension(:),intent(in) :: b
-    real(wp),intent(in) :: tol
-    integer :: flag
+    class(sun_linsol_band),intent(inout) :: me  !! the solver (pivots from `setup`)
+    class(sun_matrix),intent(inout) :: A  !! the band LU factors from `setup` (a `band_matrix`)
+    real(wp),dimension(:),intent(inout) :: x  !! the solution x
+    real(wp),dimension(:),intent(in) :: b  !! the right-hand side b
+    real(wp),intent(in) :: tol  !! tolerance (unused by direct solvers)
+    integer :: flag  !! `SUN_SUCCESS` or `SUN_ERR_ARG_INCOMPATIBLE`
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
     select type (A)
@@ -295,14 +297,21 @@
 
     function band_gbtrf(a, n, mu, ml, smu, p) result(info)
 
-    real(wp),dimension(0:,0:),intent(inout) :: a
-    integer(ip),intent(in) :: n, mu, ml, smu
-    integer(ip),dimension(0:),intent(out) :: p
-    integer(ip) :: info
+    real(wp),dimension(0:,0:),intent(inout) :: a  !! band storage, (i,j) at a(i-j+smu,j); out: LU
+    integer(ip),intent(in) :: n    !! number of equations
+    integer(ip),intent(in) :: mu   !! upper bandwidth
+    integer(ip),intent(in) :: ml   !! lower bandwidth
+    integer(ip),intent(in) :: smu  !! storage upper bandwidth (>= min(n-1, mu+ml))
+    integer(ip),dimension(0:),intent(out) :: p  !! pivots (0-based): row k swapped with row `p(k)`
+    integer(ip) :: info  !! 0 on success, k if the k-th pivot is zero (1-based)
 
-    integer(ip) :: c, num_rows, i, j, k, l, storage_l, storage_k, last_col_k, last_row_k
-    real(wp) :: max, temp, mult, a_kj
-    logical :: swap
+    integer(ip) :: c                       !! column index (zeroing the fill-in rows)
+    integer(ip) :: num_rows                !! number of fill-in rows, smu - mu
+    integer(ip) :: i, j, k, l              !! row, column, step and pivot row indices
+    integer(ip) :: storage_l, storage_k    !! storage rows of elements (l,j) and (k,j)
+    integer(ip) :: last_col_k, last_row_k  !! last column and row changed by step k
+    real(wp) :: max, temp, mult, a_kj  !! pivot size, swap temp, multiplier, a(k,j)
+    logical :: swap  !! rows k and l are swapped in this step
 
     ! zero out the first smu - mu rows of the rectangular array a
     num_rows = smu - mu
@@ -396,13 +405,16 @@
 
     subroutine band_gbtrs(a, n, smu, ml, p, bvec)
 
-    real(wp),dimension(0:,0:),intent(in) :: a
-    integer(ip),intent(in) :: n, smu, ml
-    integer(ip),dimension(0:),intent(in) :: p
-    real(wp),dimension(0:),intent(inout) :: bvec
+    real(wp),dimension(0:,0:),intent(in) :: a  !! the band LU factors from `band_gbtrf`
+    integer(ip),intent(in) :: n    !! number of equations
+    integer(ip),intent(in) :: smu  !! storage upper bandwidth
+    integer(ip),intent(in) :: ml   !! lower bandwidth
+    integer(ip),dimension(0:),intent(in) :: p  !! the pivots from `band_gbtrf`
+    real(wp),dimension(0:),intent(inout) :: bvec  !! on input the right-hand side b, on output the solution x (0-based)
 
-    integer(ip) :: k, l, i, first_row_k, last_row_k
-    real(wp) :: mult
+    integer(ip) :: k, l, i                  !! step, pivot row and row indices
+    integer(ip) :: first_row_k, last_row_k  !! first and last rows in column k
+    real(wp) :: mult  !! multiplier (pivoted b(k), then -x(k))
 
     ! solve Ly = Pb, store solution y in b
     do k = 0, n - 2

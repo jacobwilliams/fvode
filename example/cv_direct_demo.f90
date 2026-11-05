@@ -29,37 +29,37 @@
     implicit none
 
     ! shared problem constants
-    real(wp),parameter :: ATOL = 1.0e-6_wp
-    real(wp),parameter :: RTOL = 0.0_wp
+    real(wp),parameter :: ATOL = 1.0e-6_wp  !! absolute tolerance
+    real(wp),parameter :: RTOL = 0.0_wp  !! relative tolerance
 
     ! problem 1 constants
-    integer,parameter  :: P1_NEQ = 2
-    real(wp),parameter :: P1_ETA = 3.0_wp
-    integer,parameter  :: P1_NOUT = 4
-    real(wp),parameter :: P1_T0 = 0.0_wp
-    real(wp),parameter :: P1_T1 = 1.39283880203_wp
-    real(wp),parameter :: P1_DTOUT = 2.214773875_wp
-    real(wp),parameter :: P1_TOL_FACTOR = 1.0e4_wp
+    integer,parameter  :: P1_NEQ = 2  !! problem 1: number of equations
+    real(wp),parameter :: P1_ETA = 3.0_wp  !! problem 1: van der Pol parameter
+    integer,parameter  :: P1_NOUT = 4  !! problem 1: number of output times
+    real(wp),parameter :: P1_T0 = 0.0_wp  !! problem 1: initial time
+    real(wp),parameter :: P1_T1 = 1.39283880203_wp  !! problem 1: first output time
+    real(wp),parameter :: P1_DTOUT = 2.214773875_wp  !! problem 1: output time interval
+    real(wp),parameter :: P1_TOL_FACTOR = 1.0e4_wp  !! problem 1: error check factor
 
     ! problem 2 constants
-    integer,parameter  :: P2_MESHX = 5
-    integer,parameter  :: P2_MESHY = 5
-    integer,parameter  :: P2_NEQ = P2_MESHX * P2_MESHY
-    real(wp),parameter :: P2_ALPH1 = 1.0_wp
-    real(wp),parameter :: P2_ALPH2 = 1.0_wp
-    integer,parameter  :: P2_NOUT = 5
-    integer,parameter  :: P2_ML = 5
-    integer,parameter  :: P2_MU = 0
-    real(wp),parameter :: P2_T0 = 0.0_wp
-    real(wp),parameter :: P2_T1 = 0.01_wp
-    real(wp),parameter :: P2_TOUT_MULT = 10.0_wp
-    real(wp),parameter :: P2_TOL_FACTOR = 1.0e3_wp
+    integer,parameter  :: P2_MESHX = 5  !! problem 2: mesh points in x
+    integer,parameter  :: P2_MESHY = 5  !! problem 2: mesh points in y
+    integer,parameter  :: P2_NEQ = P2_MESHX * P2_MESHY  !! problem 2: number of equations
+    real(wp),parameter :: P2_ALPH1 = 1.0_wp  !! problem 2: advection coefficient in x
+    real(wp),parameter :: P2_ALPH2 = 1.0_wp  !! problem 2: advection coefficient in y
+    integer,parameter  :: P2_NOUT = 5  !! problem 2: number of output times
+    integer,parameter  :: P2_ML = 5  !! problem 2: lower bandwidth
+    integer,parameter  :: P2_MU = 0  !! problem 2: upper bandwidth
+    real(wp),parameter :: P2_T0 = 0.0_wp  !! problem 2: initial time
+    real(wp),parameter :: P2_T1 = 0.01_wp  !! problem 2: first output time
+    real(wp),parameter :: P2_TOUT_MULT = 10.0_wp  !! problem 2: output time multiplier
+    real(wp),parameter :: P2_TOL_FACTOR = 1.0e3_wp  !! problem 2: error check factor
 
     ! linear solver options
     integer,parameter :: FUNC = 0, DENSE_USER = 1, DENSE_DQ = 2, DIAG = 3, &
-                         BAND_USER = 4, BAND_DQ = 5
+                         BAND_USER = 4, BAND_DQ = 5  !! linear solver options: fixed point, dense (user/DQ Jacobian), diagonal, band (user/DQ Jacobian)
 
-    integer :: nerr
+    integer :: nerr  !! total number of errors
 
     nerr = problem1()
     nerr = nerr + problem2()
@@ -69,13 +69,14 @@
 
 !*****************************************************************************************
     function problem1() result(nerr)
+    !! run problem 1 with Adams and BDF and each solver option; returns the number of errors
 
-    integer :: nerr
+    integer :: nerr  !! number of errors
 
-    type(cvode_solver) :: cvode
-    real(wp),dimension(P1_NEQ) :: y
-    real(wp) :: t, tout, ero, er
-    integer :: lmm, miter, retval, iout
+    type(cvode_solver) :: cvode  !! the CVODE solver
+    real(wp),dimension(P1_NEQ) :: y  !! solution vector
+    real(wp) :: t, tout, ero, er  !! time reached, output time, maximum error ratio, and error ratio at an output
+    integer :: lmm, miter, retval, iout  !! method, solver option, return flag, and output counter
 
     nerr = 0
 
@@ -128,11 +129,12 @@
 
 !*****************************************************************************************
     function f1(me, t, y, ydot) result(retval)
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(out) :: ydot
-    integer :: retval
+    !! right-hand side of problem 1 (van der Pol)
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
     ydot(1) = y(2)
     ydot(2) = (1.0_wp - y(1)**2) * P1_ETA * y(2) - y(1)
     retval = 0
@@ -141,12 +143,13 @@
 
 !*****************************************************************************************
     function jac1(me, t, y, fy, J, tmp1, tmp2, tmp3) result(retval)
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y, fy
-    class(sun_matrix),intent(inout) :: J
-    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3
-    integer :: retval
+    !! dense Jacobian of problem 1
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y, fy  !! current state vector and f(t,y)
+    class(sun_matrix),intent(inout) :: J  !! Jacobian matrix df/dy (filled in here)
+    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors (not used)
+    integer :: retval  !! return value: 0 on success
     select type (J)
     type is (dense_matrix)
         J%data(1,2) = 1.0_wp
@@ -159,13 +162,14 @@
 
 !*****************************************************************************************
     function problem2() result(nerr)
+    !! run problem 2 with Adams and BDF and each solver option; returns the number of errors
 
-    integer :: nerr
+    integer :: nerr  !! number of errors
 
-    type(cvode_solver) :: cvode
-    real(wp),dimension(P2_NEQ) :: y
-    real(wp) :: t, tout, er, erm, ero
-    integer :: lmm, miter, retval, iout
+    type(cvode_solver) :: cvode  !! the CVODE solver
+    real(wp),dimension(P2_NEQ) :: y  !! solution vector
+    real(wp) :: t, tout, er, erm, ero  !! time reached, output time, error ratio, maximum error at an output, and maximum error ratio
+    integer :: lmm, miter, retval, iout  !! method, solver option, return flag, and output counter
 
     nerr = 0
 
@@ -222,13 +226,13 @@
     function f2(me, t, y, ydot) result(retval)
     !! excluding boundaries,
     !! ydot(i,j) = -2 y(i,j) + alpha1 * y(i-1,j) + alpha2 * y(i,j-1)
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(out) :: ydot
-    integer :: retval
-    integer :: i, j, k
-    real(wp) :: d
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
+    integer :: i, j, k  !! mesh indices in x and y, and index in the solution vector
+    real(wp) :: d  !! accumulated derivative of y(k)
     do j = 0, P2_MESHY - 1
         do i = 0, P2_MESHX - 1
             k = 1 + i + j * P2_MESHX
@@ -244,13 +248,14 @@
 
 !*****************************************************************************************
     function jac2(me, t, y, fy, J, tmp1, tmp2, tmp3) result(retval)
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y, fy
-    class(sun_matrix),intent(inout) :: J
-    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3
-    integer :: retval
-    integer(ip) :: i, jj, k
+    !! band Jacobian of problem 2
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y, fy  !! current state vector and f(t,y)
+    class(sun_matrix),intent(inout) :: J  !! Jacobian matrix df/dy (filled in here)
+    real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors (not used)
+    integer :: retval  !! return value: 0 on success
+    integer(ip) :: i, jj, k  !! mesh indices in x and y, and index in the solution vector
     select type (J)
     type is (band_matrix)
         do jj = 0, P2_MESHY - 1
@@ -270,11 +275,11 @@
     function max_error(y, t) result(maxerr)
     !! maximum error against the exact solution
     !! y(i,j) = t^(i+j) exp(-2t) / (i! j!)
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),intent(in) :: t
-    real(wp) :: maxerr
-    integer :: i, j, k
-    real(wp) :: er, ex, yt, ifact_inv, jfact_inv
+    real(wp),dimension(:),intent(in) :: y  !! computed solution
+    real(wp),intent(in) :: t  !! time of the solution
+    real(wp) :: maxerr  !! maximum absolute error
+    integer :: i, j, k  !! mesh indices in x and y, and index in the solution vector
+    real(wp) :: er, ex, yt, ifact_inv, jfact_inv  !! error at a point, exp(-2t), exact solution at a point, and 1/i!, 1/j!
     maxerr = 0.0_wp
     if (t == 0.0_wp) return
     ex = 0.0_wp
@@ -296,10 +301,11 @@
 
 !*****************************************************************************************
     subroutine prepare_next_run(cvode, lmm, miter, neq, mu, ml)
-    type(cvode_solver),intent(inout) :: cvode
-    integer,intent(in) :: lmm, miter, neq, mu, ml
-    integer :: retval
-    integer(ip) :: n
+    !! attach the nonlinear and linear solvers for the next run, and print its header
+    type(cvode_solver),intent(inout) :: cvode  !! the CVODE solver
+    integer,intent(in) :: lmm, miter, neq, mu, ml  !! method, solver option, number of equations, and upper/lower bandwidths
+    integer :: retval  !! return flag
+    integer(ip) :: n  !! number of equations (index kind)
     n = neq
     write(*,'(/a)') ''
     write(*,'(a)') '-------------------------------------------------------------'
@@ -346,17 +352,19 @@
 
 !*****************************************************************************************
     subroutine print_err_output(tol_factor)
-    real(wp),intent(in) :: tol_factor
+    !! print the error-exceeds-tolerance message
+    real(wp),intent(in) :: tol_factor  !! tolerance factor that was exceeded
     write(*,'(//a,g0,a//)') ' Error exceeds ', tol_factor, ' * tolerance '
     end subroutine print_err_output
 !*****************************************************************************************
 
 !*****************************************************************************************
     subroutine print_final_stats(cvode, miter, ero)
-    type(cvode_solver),intent(in) :: cvode
-    integer,intent(in) :: miter
-    real(wp),intent(in) :: ero
-    integer(li) :: nje, nfeLS
+    !! print the statistics of one run
+    type(cvode_solver),intent(in) :: cvode  !! the CVODE solver
+    integer,intent(in) :: miter  !! solver option of the run
+    real(wp),intent(in) :: ero  !! maximum error ratio of the run
+    integer(li) :: nje, nfeLS  !! number of Jacobian evaluations and of f evaluations in the linear solver
     write(*,'(/a/)') ' Final statistics for this run:'
     write(*,'(a,i4,a)') ' Number of steps                          = ', cvode%get_num_steps(), ' '
     write(*,'(a,i4,a)') ' Number of f-s                            = ', cvode%get_num_rhs_evals(), ' '
@@ -382,7 +390,8 @@
 
 !*****************************************************************************************
     subroutine print_err_info(nerr)
-    integer,intent(in) :: nerr
+    !! print the total number of errors
+    integer,intent(in) :: nerr  !! total number of errors
     write(*,'(/a)') ''
     write(*,'(a)') '-------------------------------------------------------------'
     write(*,'(a)') '-------------------------------------------------------------'

@@ -29,14 +29,14 @@
 
     module subroutine CVodeSetLinearSolver(me, LS, A, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    class(sun_linear_solver),intent(in) :: LS
-    class(sun_matrix),intent(in),optional :: A
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    class(sun_linear_solver),intent(in) :: LS  !! the linear solver (copied into the CVODE object)
+    class(sun_matrix),intent(in),optional :: A  !! the matrix (required for direct solvers; copied)
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_MEM_NULL` or `CVLS_ILL_INPUT`
 
-    integer :: LSType
-    logical :: iterative    ! is the solver iterative?
-    logical :: matrixbased  ! is a matrix structure used?
+    integer :: LSType  !! linear solver type (`SUNLINEARSOLVER_*`)
+    logical :: iterative    !! is the solver iterative?
+    logical :: matrixbased  !! is a matrix structure used?
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CVLS_MEM_NULL, 'CVodeSetLinearSolver', 'Integrator memory is NULL.')
@@ -121,9 +121,9 @@
 
     module subroutine CVodeSetJacFn(me, jac, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    procedure(cv_jac_fn),optional :: jac
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    procedure(cv_jac_fn),optional :: jac  !! user Jacobian (absent: difference quotients)
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
 
     if (me%ls_kind /= LS_GENERIC) then
         call cvProcessError(me, CVLS_LMEM_NULL, 'CVodeSetJacFn', 'Linear solver memory is NULL.')
@@ -160,9 +160,9 @@
 
     module subroutine CVodeSetJacEvalFrequency(me, msbj, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer(li),intent(in) :: msbj
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer(li),intent(in) :: msbj  !! max steps between Jacobian evaluations (0: default)
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
 
     if (me%ls_kind /= LS_GENERIC) then
         call cvProcessError(me, CVLS_LMEM_NULL, 'CVodeSetJacEvalFrequency', &
@@ -196,9 +196,9 @@
 
     module subroutine CVodeSetLinearSolutionScaling(me, onoff, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    logical,intent(in) :: onoff
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    logical,intent(in) :: onoff  !! turn the solution scaling on or off
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
 
     if (me%ls_kind /= LS_GENERIC) then
         call cvProcessError(me, CVLS_LMEM_NULL, 'CVodeSetLinearSolutionScaling', &
@@ -227,9 +227,9 @@
 
     module subroutine CVodeSetDeltaGammaMaxBadJac(me, dgmax_jbad, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: dgmax_jbad
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: dgmax_jbad  !! gamma ratio threshold (<= 0: default, 0.2)
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS` or `CVLS_LMEM_NULL`
 
     if (me%ls_kind /= LS_GENERIC) then
         call cvProcessError(me, CVLS_LMEM_NULL, 'CVodeSetDeltaGammaMaxBadJac', &
@@ -256,8 +256,8 @@
 
     module function cvLsInitialize(me) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer :: flag  !! `SUN_SUCCESS`, or a failure flag of the linear solver initialize
 
     ! set up the Jacobian (matrix-based case)
     if (allocated(me%A)) then
@@ -294,8 +294,8 @@
 
     module function cvLsReInitialize(me) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer :: flag  !! always `CVLS_SUCCESS`
 
     call cvLsInitializeCounters(me)
     flag = CVLS_SUCCESS
@@ -315,15 +315,15 @@
 
     module function cvLsSetup(me, convfail, ypred, fpred, jcur) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(in) :: convfail
-    real(wp),dimension(:),intent(in) :: ypred
-    real(wp),dimension(:),intent(in) :: fpred
-    logical,intent(out) :: jcur
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: convfail  !! `CV_NO_FAILURES`, `CV_FAIL_BAD_J` or `CV_FAIL_OTHER`
+    real(wp),dimension(:),intent(in) :: ypred  !! predicted solution at tn
+    real(wp),dimension(:),intent(in) :: fpred  !! f(tn, ypred)
+    logical,intent(out) :: jcur  !! the Jacobian was re-evaluated (is current)
+    integer :: flag  !! 0 on success, > 0 recoverable failure, < 0 unrecoverable failure
 
-    real(wp) :: dgamma
-    integer :: retval
+    real(wp) :: dgamma  !! relative change in gamma since the last setup
+    integer :: retval  !! return flag of the linear system setup
 
     ! use nst, gamma/gammap, and convfail to set J/P eval. flag jok
     dgamma  = abs((me%gamma / me%gammap) - ONE)
@@ -375,15 +375,15 @@
 
     module function cvLsSolve(me, b, weight, ynow, fnow) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(inout) :: b
-    real(wp),dimension(:),intent(in) :: weight
-    real(wp),dimension(:),intent(in) :: ynow
-    real(wp),dimension(:),intent(in) :: fnow
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(inout) :: b  !! in: right-hand side; out: solution x
+    real(wp),dimension(:),intent(in) :: weight  !! error weights (used by iterative solvers)
+    real(wp),dimension(:),intent(in) :: ynow  !! current solution (used by iterative solvers)
+    real(wp),dimension(:),intent(in) :: fnow  !! f at ynow (used by iterative solvers)
+    integer :: flag  !! 0 on success, 1 recoverable failure, -1 unrecoverable failure
 
-    integer :: retval
-    real(wp) :: delta
+    integer :: retval  !! return flag of the linear solver
+    real(wp) :: delta  !! linear solver tolerance (0 for direct solvers)
 
     ! [not yet ported] iterative solvers: tolerance and quick-return test
     delta = ZERO
@@ -434,7 +434,7 @@
 
     module subroutine cvLsFree(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     if (allocated(me%ls_ytemp)) deallocate(me%ls_ytemp)
     if (allocated(me%ls_x))     deallocate(me%ls_x)
@@ -452,7 +452,7 @@
 
     subroutine cvLsInitializeCounters(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     me%nje      = 0
     me%nfeDQ    = 0
@@ -474,16 +474,16 @@
 
     function cvLsLinSys(me, t, y, fy, jok, jcur, gamma) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(in) :: fy
-    logical,intent(in) :: jok
-    logical,intent(out) :: jcur
-    real(wp),intent(in) :: gamma
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t  !! current time
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+    logical,intent(in) :: jok  !! the saved Jacobian may be reused
+    logical,intent(out) :: jcur  !! the Jacobian was re-evaluated (is current)
+    real(wp),intent(in) :: gamma  !! gamma = h*rl1 in A = I - gamma*J
+    integer :: flag  !! `CVLS_SUCCESS`, 1 recoverable, -1 or `CVLS_SUNMAT_FAIL` unrecoverable
 
-    integer :: retval
+    integer :: retval  !! return flag of the Jacobian or matrix routines
 
     ! if jok = .true., use saved copy of J
     if (jok) then
@@ -554,12 +554,12 @@
 
     function cvLsDQJac(me, t, y, fy, Jac) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(in) :: fy
-    class(sun_matrix),intent(inout) :: Jac
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t  !! current time
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+    class(sun_matrix),intent(inout) :: Jac  !! the Jacobian (a dense or band matrix)
+    integer :: flag  !! 0 on success, f's flag on failure, `CVLS_ILL_INPUT` for other matrices
 
     select type (Jac)
     type is (dense_matrix)
@@ -586,15 +586,20 @@
 
     function cvLsDenseDQJac(me, t, y, fy, Jac) result(retval)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(in) :: fy
-    type(dense_matrix),intent(inout) :: Jac
-    integer :: retval
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t  !! current time
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+    type(dense_matrix),intent(inout) :: Jac  !! the Jacobian
+    integer :: retval  !! 0 on success, or the flag of a failed f evaluation
 
-    real(wp) :: fnorm, minInc, inc, inc_inv, yjsaved, srur
-    integer(ip) :: j, N
+    real(wp) :: fnorm    !! WRMS norm of fy
+    real(wp) :: minInc   !! minimum increment
+    real(wp) :: inc      !! increment in y_j
+    real(wp) :: inc_inv  !! 1/inc
+    real(wp) :: yjsaved  !! saved y_j
+    real(wp) :: srur     !! sqrt(uround)
+    integer(ip) :: j, N  !! column index, number of equations
 
     retval = 0
 
@@ -649,16 +654,24 @@
 
     function cvLsBandDQJac(me, t, y, fy, Jac) result(retval)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(in) :: fy
-    type(band_matrix),intent(inout) :: Jac
-    integer :: retval
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(in) :: t  !! current time
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+    type(band_matrix),intent(inout) :: Jac  !! the Jacobian
+    integer :: retval  !! 0 on success, or the flag of a failed f evaluation
 
-    real(wp) :: fnorm, minInc, inc, inc_inv, srur
-    integer(ip) :: group, i, j, width, ngroups, i1, i2
-    integer(ip) :: N, mupper, mlower
+    real(wp) :: fnorm    !! WRMS norm of fy
+    real(wp) :: minInc   !! minimum increment
+    real(wp) :: inc      !! increment in y_j
+    real(wp) :: inc_inv  !! 1/inc
+    real(wp) :: srur     !! sqrt(uround)
+    integer(ip) :: group    !! column group (1..ngroups)
+    integer(ip) :: i, j     !! row and column indices (0-based)
+    integer(ip) :: width    !! spacing of the columns in a group, ml + mu + 1
+    integer(ip) :: ngroups  !! number of column groups
+    integer(ip) :: i1, i2   !! first and last row in the band of column j
+    integer(ip) :: N, mupper, mlower  !! number of equations, upper and lower bandwidths
 
     retval = 0
 

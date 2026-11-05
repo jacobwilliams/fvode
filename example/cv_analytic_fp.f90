@@ -29,17 +29,17 @@
 
     implicit none
 
-    real(wp),parameter :: lambda = -100.0_wp
-    real(wp),parameter :: tstart = 0.0_wp
-    real(wp),parameter :: tend   = 10.0_wp
-    real(wp),parameter :: dtout  = 1.0_wp
-    real(wp),parameter :: rtol   = 1.0e-6_wp
-    real(wp),parameter :: atol   = 1.0e-10_wp
+    real(wp),parameter :: lambda = -100.0_wp  !! stiffness parameter of the ODE
+    real(wp),parameter :: tstart = 0.0_wp  !! initial time
+    real(wp),parameter :: tend   = 10.0_wp  !! final time
+    real(wp),parameter :: dtout  = 1.0_wp  !! output time interval
+    real(wp),parameter :: rtol   = 1.0e-6_wp  !! relative tolerance
+    real(wp),parameter :: atol   = 1.0e-10_wp  !! absolute tolerance
 
-    type(cvode_solver) :: cvode
-    real(wp),dimension(1) :: y
-    real(wp) :: tout, tcur
-    integer :: ierr, nout, outstep
+    type(cvode_solver) :: cvode  !! the CVODE solver
+    real(wp),dimension(1) :: y  !! solution vector
+    real(wp) :: tout, tcur  !! next output time and time reached by the solver
+    integer :: ierr, nout, outstep  !! error flag, number of outputs, and output counter
 
     tcur = tstart
     tout = tstart
@@ -77,20 +77,20 @@
 
         function rhs(me, t, y, ydot) result(retval)
         !! right-hand side function
-        class(cvode_solver),intent(inout) :: me
-        real(wp),intent(in) :: t
-        real(wp),dimension(:),intent(in) :: y
-        real(wp),dimension(:),intent(out) :: ydot
-        integer :: retval
+        class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+        real(wp),intent(in) :: t  !! current value of the independent variable
+        real(wp),dimension(:),intent(in) :: y  !! current state vector
+        real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+        integer :: retval  !! return value: 0 on success
         ydot(1) = lambda*y(1) + 1.0_wp/(1.0_wp + t*t) - lambda*atan(t)
         retval = 0
         end function rhs
 
         subroutine print_stats()
         !! same output as CVodeStats in the SUNDIALS example
-        integer(li) :: nsteps, nfevals, nlinsetups, netfails, nniters, nncfails
-        integer :: qlast, qcur
-        real(wp) :: hinused, hlast, hcur, tcur_
+        integer(li) :: nsteps, nfevals, nlinsetups, netfails, nniters, nncfails  !! number of steps, f evaluations, linear solver setups, error test failures, nonlinear iterations and nonlinear convergence failures
+        integer :: qlast, qcur  !! method order of the last step and of the next step
+        real(wp) :: hinused, hlast, hcur, tcur_  !! initial, last and next step size, and current internal time
         call cvode%get_integrator_stats(nsteps, nfevals, nlinsetups, netfails, &
                                         qlast, qcur, hinused, hlast, hcur, tcur_)
         call cvode%get_nonlin_solv_stats(nniters, nncfails)
@@ -111,7 +111,8 @@
         end subroutine print_stats
 
         subroutine check(name)
-        character(len=*),intent(in) :: name
+        !! stop if the last solver call returned an error
+        character(len=*),intent(in) :: name  !! name of the call that was checked
         if (ierr < 0) then
             print *, 'Error in '//name//', ierr = ', ierr, '; halting'
             error stop 1

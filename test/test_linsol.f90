@@ -16,13 +16,14 @@
 
     public :: collect_linsol
 
-    integer(ip),parameter :: n = 9, mu = 2, ml = 3
+    integer(ip),parameter :: n = 9, mu = 2, ml = 3  !! matrix size and upper/lower bandwidths of the test matrix
 
     contains
 !*****************************************************************************************
 
     subroutine collect_linsol(testsuite)
-    type(unittest_type),allocatable,intent(out) :: testsuite(:)
+    !! collect all tests in this suite
+    type(unittest_type),allocatable,intent(out) :: testsuite(:)  !! the unit tests of this suite
     testsuite = [ new_unittest("dense_lu_solve", test_dense),   &
                   new_unittest("dense_singular", test_singular),&
                   new_unittest("band_lu_solve",  test_band),    &
@@ -35,7 +36,7 @@
 !  partial pivoting is needed.
 
     pure real(wp) function aij(i, j)
-    integer(ip),intent(in) :: i, j
+    integer(ip),intent(in) :: i, j  !! row and column index (1-based)
     if (j - i > mu .or. i - j > ml) then
         aij = 0.0_wp
     else
@@ -46,12 +47,13 @@
 
 !*****************************************************************************************
     subroutine test_dense(error)
-    type(error_type),allocatable,intent(out) :: error
-    type(dense_matrix) :: A
-    type(sun_linsol_dense) :: S
-    real(wp),dimension(n) :: x, b, xtrue
-    real(wp),dimension(n,n) :: Aorig
-    integer(ip) :: i, j
+    !! test the dense LU solve against a known solution
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+    type(dense_matrix) :: A  !! matrix (overwritten by its LU factors)
+    type(sun_linsol_dense) :: S  !! dense linear solver
+    real(wp),dimension(n) :: x, b, xtrue  !! computed solution, right-hand side, and exact solution
+    real(wp),dimension(n,n) :: Aorig  !! copy of the matrix before factorization
+    integer(ip) :: i, j  !! row and column indices
     A = dense_matrix(n, n)
     S = sun_linsol_dense(n)
     do j = 1, n
@@ -69,9 +71,10 @@
 
 !*****************************************************************************************
     subroutine test_singular(error)
-    type(error_type),allocatable,intent(out) :: error
-    type(dense_matrix) :: A
-    type(sun_linsol_dense) :: S
+    !! test that a zero pivot is reported
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+    type(dense_matrix) :: A  !! singular matrix
+    type(sun_linsol_dense) :: S  !! dense linear solver
     A = dense_matrix(3_ip, 3_ip)
     S = sun_linsol_dense(3_ip)
     A%data = reshape([1.0_wp, 2.0_wp, 3.0_wp, 2.0_wp, 4.0_wp, 6.0_wp, 0.0_wp, 1.0_wp, 1.0_wp], [3,3])
@@ -81,12 +84,13 @@
 
 !*****************************************************************************************
     subroutine test_band(error)
-    type(error_type),allocatable,intent(out) :: error
-    type(band_matrix) :: A
-    type(sun_linsol_band) :: S
-    real(wp),dimension(n) :: x, b, xtrue
-    real(wp),dimension(n,n) :: Afull
-    integer(ip) :: i, j
+    !! test the band matvec and LU solve against a known solution
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+    type(band_matrix) :: A  !! band matrix (overwritten by its LU factors)
+    type(sun_linsol_band) :: S  !! band linear solver
+    real(wp),dimension(n) :: x, b, xtrue  !! computed solution or product, right-hand side, and exact solution
+    real(wp),dimension(n,n) :: Afull  !! the same matrix in dense form
+    integer(ip) :: i, j  !! row and column indices
     A = band_matrix(n, mu, ml)
     S = sun_linsol_band(n)
     Afull = 0.0_wp
@@ -109,11 +113,11 @@
 !*****************************************************************************************
     subroutine test_band_layout(error)
     !! scale_add_i and copy on the band agree with the dense equivalents
-    type(error_type),allocatable,intent(out) :: error
-    type(band_matrix) :: A, B
-    type(dense_matrix) :: D
-    integer(ip) :: i, j
-    integer :: flag
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+    type(band_matrix) :: A, B  !! band matrix and its copy
+    type(dense_matrix) :: D  !! the same matrix in dense form
+    integer(ip) :: i, j  !! row and column indices
+    integer :: flag  !! return flag of the copy
     A = band_matrix(n, mu, ml)
     D = dense_matrix(n, n)
     do j = 1, n

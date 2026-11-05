@@ -13,9 +13,9 @@
 
     implicit none
 
-    integer :: stat, is
-    type(testsuite_type),allocatable :: testsuites(:)
-    character(len=*),parameter :: fmt = '("#", *(1x, a))'
+    integer :: stat, is  !! number of failed tests, and suite counter
+    type(testsuite_type),allocatable :: testsuites(:)  !! all test suites
+    character(len=*),parameter :: fmt = '("#", *(1x, a))'  !! format for the suite name
 
     stat = 0
 

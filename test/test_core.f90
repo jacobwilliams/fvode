@@ -27,7 +27,7 @@
 
     subroutine collect_core(testsuite)
 
-    type(unittest_type),allocatable,intent(out) :: testsuite(:)
+    type(unittest_type),allocatable,intent(out) :: testsuite(:)  !! the unit tests of this suite
 
     testsuite = [ new_unittest("decay_adams_fp",  test_decay),       &
                   new_unittest("get_dky",         test_get_dky),     &
@@ -44,11 +44,11 @@
 
     function decay(me, t, y, ydot) result(retval)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),intent(in) :: t
-    real(wp),dimension(:),intent(in) :: y
-    real(wp),dimension(:),intent(out) :: ydot
-    integer :: retval
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
 
     ydot(1) = -y(1)
     ydot(2) = -0.5_wp * y(2)
@@ -63,11 +63,11 @@
 
     subroutine setup(cv, y, error)
 
-    type(cvode_solver),intent(inout) :: cv
-    real(wp),dimension(2),intent(inout) :: y
-    type(error_type),allocatable,intent(inout) :: error
+    type(cvode_solver),intent(inout) :: cv  !! the solver to set up
+    real(wp),dimension(2),intent(inout) :: y  !! initial condition (set here)
+    type(error_type),allocatable,intent(inout) :: error  !! error information (allocated on failure)
 
-    integer :: flag
+    integer :: flag  !! return flag of the last solver call
 
     y = [1.0_wp, 2.0_wp]
     call cv%create(CV_ADAMS, flag);                     call check(error, flag, CV_SUCCESS)
@@ -84,13 +84,14 @@
 
 !*****************************************************************************************
     subroutine test_decay(error)
+    !! test the accuracy of the solution of [[decay]]
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    type(cvode_solver) :: cv
-    real(wp),dimension(2) :: y
-    real(wp) :: t
-    integer :: flag
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y  !! solution vector
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag of the last solver call
 
     call setup(cv, y, error); if (allocated(error)) return
 
@@ -105,13 +106,14 @@
 
 !*****************************************************************************************
     subroutine test_get_dky(error)
+    !! test interpolation with get_dky inside the last step
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    type(cvode_solver) :: cv
-    real(wp),dimension(2) :: y, dky
-    real(wp) :: t, tmid
-    integer :: flag
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y, dky  !! solution and interpolated derivative
+    real(wp) :: t, tmid  !! time reached and a time inside the last step
+    integer :: flag  !! return flag of the last solver call
 
     call setup(cv, y, error); if (allocated(error)) return
 
@@ -148,13 +150,14 @@
 
 !*****************************************************************************************
     subroutine test_stop_time(error)
+    !! test the stop time option
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    type(cvode_solver) :: cv
-    real(wp),dimension(2) :: y
-    real(wp) :: t
-    integer :: flag
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y  !! solution vector
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag of the last solver call
 
     call setup(cv, y, error); if (allocated(error)) return
 
@@ -175,14 +178,15 @@
 
 !*****************************************************************************************
     subroutine test_input_checks(error)
+    !! test the input checks of the API (expected error flags)
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
-    type(cvode_solver) :: cv
-    real(wp),dimension(2) :: y
-    real(wp),dimension(3) :: y3
-    real(wp) :: t
-    integer :: flag
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y  !! solution vector
+    real(wp),dimension(3) :: y3  !! solution vector of the wrong size
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag of the last solver call
 
     ! bad lmm
     call cv%set_error_output(.false.)
@@ -232,8 +236,9 @@
 
 !*****************************************************************************************
     subroutine test_flag_names(error)
+    !! test the return flag names
 
-    type(error_type),allocatable,intent(out) :: error
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
 
     call check(error, CVodeGetReturnFlagName(CV_SUCCESS), 'CV_SUCCESS')
     if (allocated(error)) return

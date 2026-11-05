@@ -28,13 +28,13 @@
         integer(li) :: nconvfails = 0  !! convergence failures in the last solve
         real(wp),dimension(:),allocatable :: delta  !! Newton update vector
     contains
-        procedure :: get_type           => newton_get_type
-        procedure :: initialize         => newton_initialize
-        procedure :: solve              => newton_solve
-        procedure :: set_max_iters      => newton_set_max_iters
-        procedure :: get_num_iters      => newton_get_num_iters
-        procedure :: get_cur_iter       => newton_get_cur_iter
-        procedure :: get_num_conv_fails => newton_get_num_conv_fails
+        procedure :: get_type           => newton_get_type  !! `SUNNonlinSolGetType`
+        procedure :: initialize         => newton_initialize  !! `SUNNonlinSolInitialize`
+        procedure :: solve              => newton_solve  !! `SUNNonlinSolSolve`
+        procedure :: set_max_iters      => newton_set_max_iters  !! `SUNNonlinSolSetMaxIters`
+        procedure :: get_num_iters      => newton_get_num_iters  !! `SUNNonlinSolGetNumIters`
+        procedure :: get_cur_iter       => newton_get_cur_iter  !! `SUNNonlinSolGetCurIter`
+        procedure :: get_num_conv_fails => newton_get_num_conv_fails  !! `SUNNonlinSolGetNumConvFails`
     end type sun_nonlinsol_newton
 
     interface sun_nonlinsol_newton
@@ -46,14 +46,15 @@
 
     function newton_create(n) result(nls)
     !! `SUNNonlinSol_Newton(y)` for vectors of length n.
-    integer,intent(in) :: n
-    type(sun_nonlinsol_newton) :: nls
+    integer,intent(in) :: n  !! vector length
+    type(sun_nonlinsol_newton) :: nls  !! the new solver
     allocate(nls%delta(n))
     end function newton_create
 
     function newton_get_type(me) result(itype)
-    class(sun_nonlinsol_newton),intent(in) :: me
-    integer :: itype
+    !! `SUNNonlinSolGetType_Newton`: a root-finding solver.
+    class(sun_nonlinsol_newton),intent(in) :: me  !! the Newton solver
+    integer :: itype  !! solver type (SUNNONLINEARSOLVER_*)
     itype = SUNNONLINEARSOLVER_ROOTFIND
     end function newton_get_type
 
@@ -64,8 +65,8 @@
 
     function newton_initialize(me) result(flag)
 
-    class(sun_nonlinsol_newton),intent(inout) :: me
-    integer :: flag
+    class(sun_nonlinsol_newton),intent(inout) :: me  !! the Newton solver
+    integer :: flag  !! return flag (0 on success)
 
     if (.not. me%has_lsolve) then
         flag = SUN_ERR_ARG_CORRUPT
@@ -90,17 +91,18 @@
 
     function newton_solve(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
 
-    class(sun_nonlinsol_newton),intent(inout) :: me
-    class(nls_problem),intent(inout) :: prob
+    class(sun_nonlinsol_newton),intent(inout) :: me  !! the Newton solver
+    class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
     real(wp),dimension(:),intent(in) :: y0      !! unused (as in C)
-    real(wp),dimension(:),intent(inout) :: ycor
-    real(wp),dimension(:),intent(in) :: w
-    real(wp),intent(in) :: tol
-    logical,intent(in) :: call_lsetup
-    integer :: flag
+    real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
+    real(wp),dimension(:),intent(in) :: w  !! error weights
+    real(wp),intent(in) :: tol  !! convergence tolerance
+    logical,intent(in) :: call_lsetup  !! set up the linear solver before iterating
+    integer :: flag  !! return flag (0 on success)
 
-    integer :: retval
-    logical :: jbad, callLSetup
+    integer :: retval  !! return flag of the called function
+    logical :: jbad  !! the Jacobian is suspected to be out of date
+    logical :: callLSetup  !! set up the linear solver in this pass
 
     if (call_lsetup .and. .not. me%has_lsetup) then
         flag = SUN_ERR_ARG_CORRUPT
@@ -207,9 +209,9 @@
 
     function newton_set_max_iters(me, maxiters) result(flag)
     !! `SUNNonlinSolSetMaxIters_Newton` (`maxiters >= 1`)
-    class(sun_nonlinsol_newton),intent(inout) :: me
-    integer,intent(in) :: maxiters
-    integer :: flag
+    class(sun_nonlinsol_newton),intent(inout) :: me  !! the Newton solver
+    integer,intent(in) :: maxiters  !! maximum iterations per solve (>= 1)
+    integer :: flag  !! return flag (0 on success)
     if (maxiters < 1) then
         flag = SUN_ERR_ARG_OUTOFRANGE
         return
@@ -219,20 +221,23 @@
     end function newton_set_max_iters
 
     function newton_get_num_iters(me) result(val)
-    class(sun_nonlinsol_newton),intent(in) :: me
-    integer(li) :: val
+    !! `SUNNonlinSolGetNumIters_Newton`
+    class(sun_nonlinsol_newton),intent(in) :: me  !! the Newton solver
+    integer(li) :: val  !! iterations in the last solve
     val = me%niters
     end function newton_get_num_iters
 
     function newton_get_cur_iter(me) result(val)
-    class(sun_nonlinsol_newton),intent(in) :: me
-    integer :: val
+    !! `SUNNonlinSolGetCurIter_Newton`
+    class(sun_nonlinsol_newton),intent(in) :: me  !! the Newton solver
+    integer :: val  !! current iteration number
     val = me%curiter
     end function newton_get_cur_iter
 
     function newton_get_num_conv_fails(me) result(val)
-    class(sun_nonlinsol_newton),intent(in) :: me
-    integer(li) :: val
+    !! `SUNNonlinSolGetNumConvFails_Newton`
+    class(sun_nonlinsol_newton),intent(in) :: me  !! the Newton solver
+    integer(li) :: val  !! convergence failures in the last solve
     val = me%nconvfails
     end function newton_get_num_conv_fails
 

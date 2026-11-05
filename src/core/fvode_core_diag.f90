@@ -20,8 +20,8 @@
 
     module subroutine CVDiag(me, flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer,intent(out) :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(out) :: flag  !! `CVDIAG_SUCCESS` or `CVDIAG_MEM_NULL` (init not called)
 
     if (.not. me%MallocDone) then
         call cvProcessError(me, CVDIAG_MEM_NULL, 'CVDiag', 'Integrator memory is NULL.')
@@ -54,8 +54,8 @@
 
     module function CVDiagInit(me) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer :: flag  !! always 0
 
     me%di_nfeDI     = 0
     me%di_last_flag = CVDIAG_SUCCESS
@@ -78,15 +78,15 @@
 
     module function CVDiagSetup(me, ypred, fpred, jcur) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(in) :: ypred
-    real(wp),dimension(:),intent(in) :: fpred
-    logical,intent(out) :: jcur
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in) :: ypred  !! predicted solution y at the new time
+    real(wp),dimension(:),intent(in) :: fpred  !! f(tn, ypred)
+    logical,intent(out) :: jcur  !! set to .true.: the Jacobian approximation is now current
+    integer :: flag  !! 0 on success, 1 recoverable failure, -1 unrecoverable failure
 
-    real(wp) :: r
-    integer :: retval
-    logical :: invOK
+    real(wp) :: r  !! relative size of the perturbation, 0.1*rl1
+    integer :: retval  !! return flag of the right-hand side function
+    logical :: invOK  !! M could be inverted (no zero diagonal entries)
 
     jcur = .false.
 
@@ -154,12 +154,12 @@
 
     module function CVDiagSolve(me, b) result(flag)
 
-    class(cvode_solver),intent(inout) :: me
-    real(wp),dimension(:),intent(inout) :: b
-    integer :: flag
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(inout) :: b  !! in: right-hand side; out: solution M*b
+    integer :: flag  !! 0 on success, 1 if the updated M is not invertible
 
-    logical :: invOK
-    real(wp) :: r
+    logical :: invOK  !! the updated M could be inverted
+    real(wp) :: r  !! gamma ratio, gamma/gammasv
 
     ! if gamma has changed, update factor in M, and save gamma value
     if (me%di_gammasv /= me%gamma) then
@@ -192,7 +192,7 @@
 
     module subroutine CVDiagFree(me)
 
-    class(cvode_solver),intent(inout) :: me
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     if (allocated(me%di_M))       deallocate(me%di_M)
     if (allocated(me%di_bit))     deallocate(me%di_bit)

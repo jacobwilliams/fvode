@@ -15,13 +15,13 @@
 
     implicit none
 
-    real(wp),parameter :: t0 = 0.0_wp
-    real(wp),parameter :: tfinal = 4.0e10_wp
+    real(wp),parameter :: t0 = 0.0_wp  !! initial time
+    real(wp),parameter :: tfinal = 4.0e10_wp  !! final time
 
-    type(cvode_solver) :: cv
-    real(wp),dimension(3) :: y
-    real(wp) :: t
-    integer :: flag, iunit
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(3) :: y  !! solution vector
+    real(wp) :: t  !! time reached
+    integer :: flag, iunit  !! return flag and output unit
 
     y = [1.0_wp, 0.0_wp, 0.0_wp]
 
@@ -46,11 +46,12 @@
     contains
 
         function f(me, t, y, ydot) result(retval)
-        class(cvode_solver),intent(inout) :: me
-        real(wp),intent(in) :: t
-        real(wp),dimension(:),intent(in) :: y
-        real(wp),dimension(:),intent(out) :: ydot
-        integer :: retval
+        !! right-hand side of the Robertson kinetics problem
+        class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+        real(wp),intent(in) :: t  !! current value of the independent variable
+        real(wp),dimension(:),intent(in) :: y  !! current state vector
+        real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+        integer :: retval  !! return value: 0 on success
         ydot(1) = -0.04_wp * y(1) + 1.0e4_wp * y(2) * y(3)
         ydot(3) = 3.0e7_wp * y(2) * y(2)
         ydot(2) = -ydot(1) - ydot(3)
@@ -58,7 +59,8 @@
         end function f
 
         subroutine check(name)
-        character(len=*),intent(in) :: name
+        !! stop if the last solver call returned an error
+        character(len=*),intent(in) :: name  !! name of the call that was checked
         if (flag < 0) then
             write(*,'(a,i0)') name//' failed with flag ', flag
             error stop

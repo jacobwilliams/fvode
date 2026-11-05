@@ -20,8 +20,8 @@
 
     private
 
-    real(wp),parameter :: ZERO = 0.0_wp
-    real(wp),parameter :: ONE  = 1.0_wp
+    real(wp),parameter :: ZERO = 0.0_wp  !! 0.0
+    real(wp),parameter :: ONE  = 1.0_wp  !! 1.0
 
     type,extends(sun_nonlinear_solver),public :: sun_nonlinsol_fixedpoint
         !! Fixed-point iteration (`SUNNonlinearSolverContent_FixedPoint`).
@@ -46,15 +46,15 @@
         real(wp),dimension(:,:),allocatable :: dg   !! G differences, (n,0:m-1)
         real(wp),dimension(:,:),allocatable :: q    !! QR factor Q, (n,0:m-1)
     contains
-        procedure :: get_type           => fixedpoint_get_type
-        procedure :: initialize         => fixedpoint_initialize
-        procedure :: solve              => fixedpoint_solve
-        procedure :: set_max_iters      => fixedpoint_set_max_iters
-        procedure :: get_num_iters      => fixedpoint_get_num_iters
-        procedure :: get_cur_iter       => fixedpoint_get_cur_iter
-        procedure :: get_num_conv_fails => fixedpoint_get_num_conv_fails
-        procedure :: set_damping        => fixedpoint_set_damping
-        procedure,private :: anderson_accelerate
+        procedure :: get_type           => fixedpoint_get_type  !! `SUNNonlinSolGetType`
+        procedure :: initialize         => fixedpoint_initialize  !! `SUNNonlinSolInitialize`
+        procedure :: solve              => fixedpoint_solve  !! `SUNNonlinSolSolve`
+        procedure :: set_max_iters      => fixedpoint_set_max_iters  !! `SUNNonlinSolSetMaxIters`
+        procedure :: get_num_iters      => fixedpoint_get_num_iters  !! `SUNNonlinSolGetNumIters`
+        procedure :: get_cur_iter       => fixedpoint_get_cur_iter  !! `SUNNonlinSolGetCurIter`
+        procedure :: get_num_conv_fails => fixedpoint_get_num_conv_fails  !! `SUNNonlinSolGetNumConvFails`
+        procedure :: set_damping        => fixedpoint_set_damping  !! `SUNNonlinSolSetDamping_FixedPoint`
+        procedure,private :: anderson_accelerate  !! Anderson acceleration update
     end type sun_nonlinsol_fixedpoint
 
     interface sun_nonlinsol_fixedpoint
@@ -73,12 +73,12 @@
 
     function fixedpoint_create(n, m, beta) result(nls)
 
-    integer,intent(in) :: n
-    integer,intent(in) :: m
-    real(wp),intent(in),optional :: beta
-    type(sun_nonlinsol_fixedpoint) :: nls
+    integer,intent(in) :: n  !! vector length
+    integer,intent(in) :: m  !! number of Anderson acceleration vectors (0: none)
+    real(wp),intent(in),optional :: beta  !! damping parameter, 0 < beta <= 1 (default 1: none)
+    type(sun_nonlinsol_fixedpoint) :: nls  !! the new solver
 
-    integer :: istat
+    integer :: istat  !! status flag (unused)
 
     nls%m = max(m, 0)
     allocate(nls%yprev(n), nls%gy(n), nls%delta(n))
@@ -102,8 +102,8 @@
 
     function fixedpoint_get_type(me) result(itype)
 
-    class(sun_nonlinsol_fixedpoint),intent(in) :: me
-    integer :: itype
+    class(sun_nonlinsol_fixedpoint),intent(in) :: me  !! the fixed-point solver
+    integer :: itype  !! solver type (SUNNONLINEARSOLVER_*)
 
     itype = SUNNONLINEARSOLVER_FIXEDPOINT
 
@@ -116,8 +116,8 @@
 
     function fixedpoint_initialize(me) result(flag)
 
-    class(sun_nonlinsol_fixedpoint),intent(inout) :: me
-    integer :: flag
+    class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
+    integer :: flag  !! return flag (0 on success)
 
     me%niters     = 0
     me%nconvfails = 0
@@ -134,16 +134,16 @@
 
     function fixedpoint_solve(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
 
-    class(sun_nonlinsol_fixedpoint),intent(inout) :: me
-    class(nls_problem),intent(inout) :: prob
+    class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
+    class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
     real(wp),dimension(:),intent(in) :: y0       !! unused (as in C)
-    real(wp),dimension(:),intent(inout) :: ycor
-    real(wp),dimension(:),intent(in) :: w
-    real(wp),intent(in) :: tol
+    real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
+    real(wp),dimension(:),intent(in) :: w  !! error weights
+    real(wp),intent(in) :: tol  !! convergence tolerance
     logical,intent(in) :: call_lsetup            !! unused (as in C)
-    integer :: flag
+    integer :: flag  !! return flag (0 on success)
 
-    integer :: retval
+    integer :: retval  !! return flag of the called function
 
     ! reset counter
     me%niters     = 0
@@ -224,14 +224,24 @@
 
     subroutine anderson_accelerate(me, gval, x, xold, iter)
 
-    class(sun_nonlinsol_fixedpoint),intent(inout) :: me
+    class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
     real(wp),dimension(:),intent(in) :: gval     !! G(xold)
     real(wp),dimension(:),intent(inout) :: x     !! new iterate (also used as work vector)
     real(wp),dimension(:),intent(in) :: xold     !! previous iterate
     integer,intent(in) :: iter                   !! iteration number (0-based)
 
-    integer :: i_pt, i, j, k, lAA, maa
-    real(wp) :: a, b, rtemp, c, s, onembeta
+    integer :: i_pt  !! index of the newest column in the circular df/dg storage
+    integer :: i  !! loop index
+    integer :: j  !! loop index
+    integer :: k  !! position in the index map
+    integer :: lAA  !! current dimension of the acceleration subspace, min(iter, m)
+    integer :: maa  !! maximum dimension of the acceleration subspace (m)
+    real(wp) :: a  !! Givens rotation input (first element)
+    real(wp) :: b  !! Givens rotation input (second element)
+    real(wp) :: rtemp  !! temporary (rotation result)
+    real(wp) :: c  !! Givens rotation cosine
+    real(wp) :: s  !! Givens rotation sine
+    real(wp) :: onembeta  !! 1 - beta (damping)
 
     associate (fv => me%delta, R => me%R, Q => me%q, df => me%df, dg => me%dg, &
                ipt_map => me%imap, gamma => me%gamma, vtemp => x)
@@ -365,9 +375,9 @@
 
     function fixedpoint_set_max_iters(me, maxiters) result(flag)
 
-    class(sun_nonlinsol_fixedpoint),intent(inout) :: me
-    integer,intent(in) :: maxiters
-    integer :: flag
+    class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
+    integer,intent(in) :: maxiters  !! maximum iterations per solve (>= 1)
+    integer :: flag  !! return flag (0 on success)
 
     if (maxiters < 1) then
         flag = SUN_ERR_ARG_OUTOFRANGE
@@ -386,9 +396,9 @@
 
     function fixedpoint_set_damping(me, beta) result(flag)
 
-    class(sun_nonlinsol_fixedpoint),intent(inout) :: me
-    real(wp),intent(in) :: beta
-    integer :: flag
+    class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
+    real(wp),intent(in) :: beta  !! damping parameter, 0 < beta <= 1 (1 disables damping)
+    integer :: flag  !! return flag (0 on success)
 
     if (beta <= ZERO) then
         flag = SUN_ERR_ARG_OUTOFRANGE
@@ -415,8 +425,8 @@
 
     function fixedpoint_get_num_iters(me) result(val)
 
-    class(sun_nonlinsol_fixedpoint),intent(in) :: me
-    integer(li) :: val
+    class(sun_nonlinsol_fixedpoint),intent(in) :: me  !! the fixed-point solver
+    integer(li) :: val  !! iterations in the last solve
 
     val = me%niters
 
@@ -429,8 +439,8 @@
 
     function fixedpoint_get_cur_iter(me) result(val)
 
-    class(sun_nonlinsol_fixedpoint),intent(in) :: me
-    integer :: val
+    class(sun_nonlinsol_fixedpoint),intent(in) :: me  !! the fixed-point solver
+    integer :: val  !! current iteration number
 
     val = me%curiter
 
@@ -443,8 +453,8 @@
 
     function fixedpoint_get_num_conv_fails(me) result(val)
 
-    class(sun_nonlinsol_fixedpoint),intent(in) :: me
-    integer(li) :: val
+    class(sun_nonlinsol_fixedpoint),intent(in) :: me  !! the fixed-point solver
+    integer(li) :: val  !! convergence failures in the last solve
 
     val = me%nconvfails
 

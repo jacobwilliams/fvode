@@ -159,6 +159,13 @@ keep them polymorphic:
 | `goto`-free loops with `break` | `do … exit`; named blocks/`cycle` where C uses `continue` |
 | `0`-based arrays | explicit lower bounds (`0:`) where the algorithm indexes from 0 |
 
+**Documentation** (FORD): every procedure has a `!>` header (what it does and which C function
+it translates), or a `!!` docstring for small contained procedures. Every derived type,
+argument, local variable, parameter, type component, procedure-pointer component and
+type-bound binding has a `!!` comment. `pixi run doc-audit`
+([tools/doc_audit.py](tools/doc_audit.py)) checks this and must report 0 findings. Don't start
+a `!!` line with `word:`, because FORD reads that as a metadata key.
+
 FVODE is compiled with normal optimizations. For debugging, an FVODE build with
 `-ffp-contract=off` reproduces the C reference (which is built that way) exactly; see §6.
 
@@ -203,6 +210,7 @@ summarises it.
 | `pixi run examples` | `fpm run --example --all` |
 | `pixi run lint` | debug build with `-Wall -Wextra -std=f2018 -fcheck=all` |
 | `pixi run docs` | FORD docs into `doc/` (registers graphviz plugins first: pixi skips conda post-link scripts) |
+| `pixi run doc-audit` | check that everything is documented ([tools/doc_audit.py](tools/doc_audit.py)) |
 
 **`reference` environment** (cmake, ninja, git, plus a C compiler: `gcc 16` on Linux,
 because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `c-compiler`

@@ -19,6 +19,8 @@ examples = "fpm run --example 'cv_*' --profile release"
 graphviz-config = "dot -c"
 docs = { cmd = "ford fpm.toml", depends-on = ["graphviz-config"] }
 lint = "fpm build --profile debug --flag '-Wall -Wextra -std=f2018 -fcheck=all'"
+# every procedure, type, argument, variable and component must be documented
+doc-audit = "python tools/doc_audit.py"
 
 # ---------------------------------------------------------------------------
 # Reference C SUNDIALS (pinned v7.9.0), used only for verification
