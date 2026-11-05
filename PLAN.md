@@ -38,7 +38,7 @@ Build it with **fpm** and run every tool from the **pixi** environment.
 | `cvode_nls.c` | 490 | Interface between CVODE and the nonlinear solver (`cvNlsResid`, `cvNlsLSetup`, `cvNlsConvTest`, …) | `fvode_nls.f90` |
 | `cvode_ls.c` / `cvode_ls_impl.h` | 1976 | Generic linear solver interface: DQ Jacobian (dense/band), Jacobian-times-vector DQ, `cvLsSetup/Solve`, `msbj`/`dgmax` heuristics | `fvode_ls.f90` |
 | `cvode_diag.c` | 460 | Diagonal approximate Jacobian solver | `fvode_diag.f90` |
-| `cvode_bandpre.c` | 596 | Banded preconditioner for Krylov solvers | `fvode_bandpre.f90` |
+| `cvode_bandpre.c` | 596 | Banded preconditioner for Krylov solvers | `fvode_core_bandpre.f90` (submodule) |
 | `cvode_proj.c` | 456 | Projection onto constraint manifold | `fvode_proj.f90` (phase 6) |
 | `cvode_resize.c` | 511 | `CVodeResizeHistory` | optional, phase 6 |
 
@@ -182,12 +182,11 @@ fvode/
 │   ├── fvode_parameters.f90      ! public constants + return codes
 │   ├── fvode_internal_parameters.f90 ! internal CVODE constants
 │   ├── fvode_nvector.f90         ! the few non-trivial vector ops
-│   ├── core/  fvode_types.f90 fvode_core.f90 fvode_root.f90 fvode_stab.f90
-│   │          fvode_io.f90 fvode_nls.f90 fvode_ls.f90 fvode_diag.f90
-│   │          fvode_bandpre.f90 fvode_proj.f90
-│   ├── matrix/   fvode_matrix.f90 fvode_matrix_dense.f90 fvode_matrix_band.f90
-│   │             fvode_dense.f90 fvode_band.f90
-│   ├── linsol/   fvode_linsol.f90 fvode_linsol_dense.f90 fvode_linsol_band.f90
+│   ├── core/  fvode_core.f90 (module: cvode.c, cvode_io.c, cvode_nls.c) and its
+│   │          submodules fvode_core_ls.f90 fvode_core_diag.f90 fvode_core_root.f90
+│   │          fvode_core_stald.f90 fvode_core_bandpre.f90 (planned: projection)
+│   ├── matrix/   fvode_matrix.f90 (dense and band matrices)
+│   ├── linsol/   fvode_linsol.f90 fvode_linsol_direct.f90 (dense, band)
 │   │             fvode_iterative.f90 fvode_linsol_spgmr.f90 … _spfgmr _spbcgs _sptfqmr _pcg
 │   └── nonlinsol/ fvode_nonlinsol.f90 fvode_nonlinsol_newton.f90 fvode_nonlinsol_fixedpoint.f90
 ├── test/          ! unit tests (test-drive) + regression vs C reference
@@ -432,7 +431,45 @@ Original task list:
 * **Exit criterion:** `cvRoberts_dns`, `cvRoberts_dns_constraints`, `cvRoberts_dns_negsol`,
   `cvRocket_dns`, `cvDisc_dns` match.
 
-### Phase 5: Iterative linear solvers and preconditioning
+### Phase 5: Iterative linear solvers and preconditioning ✅ done
+Delivered:
+* `fvode_linsol` reworked for Krylov solvers: the integrator implements the abstract
+  `ls_problem` (`ls_atimes`, `ls_psetup`, `ls_psolve`), which is passed to `setup`/`solve`
+  (C: function pointers plus `void*` data). `has_atimes`/`has_psetup`/`has_psolve` record which
+  functions are attached. Also `supports_*` queries, scaling vectors, zero guess,
+  `num_iters` and `res_norm`. `nls_problem` now extends `ls_problem`.
+* `fvode_iterative`: `modified_gs`, `classical_gs` (including C's `v[i-i0]` indexing),
+  `qr_fact`, `qr_sol`.
+* Solvers: `sun_linsol_spgmr`, `sun_linsol_spfgmr`, `sun_linsol_spbcgs`,
+  `sun_linsol_sptfqmr` and `sun_linsol_pcg`, with their `set_prec_type`, `set_gs_type`,
+  `set_max_restarts` and `set_maxl` setters.
+* `fvode_core_ls`: the iterative paths of `CVodeSetLinearSolver`, `cvLsInitialize` (no
+  `lsetup` without a matrix or psetup), `cvLsSetup` (matrix-free `jcur`/`npe` heuristics) and
+  `cvLsSolve` (`eplifac*tq(4)` tolerance, `nrmfac`, scaling vectors, zero guess, `jtsetup`,
+  the full return-code mapping). Also `cvLsATimes`, `cvLsDQJtimes`, `cvLsPSetup`,
+  `cvLsPSolve`, `set_preconditioner`, `set_jac_times`, `set_jac_times_rhs_fn`, `set_eps_lin`,
+  `set_ls_norm_factor`, and the J*v counters.
+* Submodule `fvode_core_bandpre` (`cvode_bandpre.c`): `band_prec_init`, the banded DQ
+  Jacobian (with constraint sign adjustments), setup/solve/free, and
+  `get_band_prec_num_rhs_evals`.
+* The attached linear solver `cvode_solver%LS` is public, so solver-specific settings
+  (e.g. `set_prec_type`) can be changed after attaching it. Fortran copies the solver,
+  where C would keep a handle.
+* Examples: `cv_diurnal_kry` (user J*v and block-diagonal preconditioner),
+  `cv_diurnal_kry_bp` (band preconditioner, left then right),
+  `cv_krylov_demo_ls` (SPGMR/SPFGMR/SPBCGS/SPTFQMR; norm factor argument 0/1/2) and
+  `cv_krylov_demo_prec` (Gauss-Seidel × block-grouped preconditioner, left/right ×
+  modified/classical Gram-Schmidt, `set_eps_lin`). Unit tests (`test_krylov`) for every Krylov
+  solver, all preconditioning sides, scaling, restarts and classical GS, including PCG,
+  which no CVODE example uses.
+
+Verification:
+* `compare-examples`: all four new ports print output identical to the C examples
+  (`cvKrylovDemo_ls` also with arguments 1 and 2). `compare_examples.py` can now pass
+  command-line arguments, and it also skips `lenrw`/`leniw` lines.
+* `compare-exact` and `compare` are unchanged for the existing traces.
+
+Original task list:
 * `fvode_iterative` (`SUNModifiedGS`, `SUNClassicalGS`, `SUNQRfact`, `SUNQRsol`).
 * SPGMR, SPFGMR, SPBCGS, SPTFQMR, PCG (left/right/both preconditioning, scaling vectors).
 * `cvLsATimes`, `cvLsDQJtimes`, `cvLsPSetup`, `cvLsPSolve`, `eplifac`/`nrmfac` handling,

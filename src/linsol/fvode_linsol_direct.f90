@@ -15,7 +15,7 @@
     use fvode_parameters, only: SUNLINEARSOLVER_DIRECT, SUN_SUCCESS, SUNLS_LUFACT_FAIL, &
                                 SUN_ERR_ARG_INCOMPATIBLE
     use fvode_matrix, only: sun_matrix, dense_matrix, band_matrix
-    use fvode_linsol, only: sun_linear_solver
+    use fvode_linsol, only: sun_linear_solver, ls_problem
 
     implicit none
 
@@ -84,13 +84,15 @@
 !>
 !  `SUNLinSolSetup_Dense`: LU factorization of A (in place).
 
-    function dense_setup(me, A) result(flag)
+    function dense_setup(me, A, prob) result(flag)
 
     class(sun_linsol_dense),intent(inout) :: me  !! the linear solver (stores the pivots)
-    class(sun_matrix),intent(inout) :: A  !! a `dense_matrix`, overwritten by its LU factors
+    class(sun_matrix),intent(inout),optional :: A  !! a `dense_matrix`, overwritten by its LU factors
+    class(ls_problem),intent(inout),optional :: prob  !! the problem (not used by direct solvers)
     integer :: flag  !! `SUN_SUCCESS`, `SUNLS_LUFACT_FAIL` (zero pivot), or < 0
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
+    if (.not. present(A)) return
     select type (A)
     type is (dense_matrix)
         me%last_flag = int(dense_getrf(A%data, me%pivots))
@@ -109,16 +111,18 @@
 !>
 !  `SUNLinSolSolve_Dense`: solve using the LU factors.
 
-    function dense_solve(me, A, x, b, tol) result(flag)
+    function dense_solve(me, A, x, b, tol, prob) result(flag)
 
     class(sun_linsol_dense),intent(inout) :: me  !! the solver (pivots from `setup`)
-    class(sun_matrix),intent(inout) :: A  !! the LU factors from `setup` (a `dense_matrix`)
+    class(sun_matrix),intent(inout),optional :: A  !! the LU factors from `setup` (a `dense_matrix`)
+    class(ls_problem),intent(inout),optional :: prob  !! the problem (not used by direct solvers)
     real(wp),dimension(:),intent(inout) :: x  !! the solution x
     real(wp),dimension(:),intent(in) :: b  !! the right-hand side b
     real(wp),intent(in) :: tol  !! tolerance (unused by direct solvers)
     integer :: flag  !! `SUN_SUCCESS` or `SUN_ERR_ARG_INCOMPATIBLE`
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
+    if (.not. present(A)) return
     select type (A)
     type is (dense_matrix)
         x = b
@@ -240,13 +244,15 @@
 !>
 !  `SUNLinSolSetup_Band`: band LU factorization of A (in place).
 
-    function band_setup(me, A) result(flag)
+    function band_setup(me, A, prob) result(flag)
 
     class(sun_linsol_band),intent(inout) :: me  !! the linear solver (stores the pivots)
-    class(sun_matrix),intent(inout) :: A  !! a `band_matrix`, overwritten by its LU factors
+    class(sun_matrix),intent(inout),optional :: A  !! a `band_matrix`, overwritten by its LU factors
+    class(ls_problem),intent(inout),optional :: prob  !! the problem (not used by direct solvers)
     integer :: flag  !! `SUN_SUCCESS`, `SUNLS_LUFACT_FAIL` (zero pivot), or < 0
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
+    if (.not. present(A)) return
     select type (A)
     type is (band_matrix)
         ! ensure that the storage upper bandwidth is large enough for the fill-in
@@ -267,16 +273,18 @@
 !>
 !  `SUNLinSolSolve_Band`: solve using the band LU factors.
 
-    function band_solve(me, A, x, b, tol) result(flag)
+    function band_solve(me, A, x, b, tol, prob) result(flag)
 
     class(sun_linsol_band),intent(inout) :: me  !! the solver (pivots from `setup`)
-    class(sun_matrix),intent(inout) :: A  !! the band LU factors from `setup` (a `band_matrix`)
+    class(sun_matrix),intent(inout),optional :: A  !! the band LU factors from `setup` (a `band_matrix`)
+    class(ls_problem),intent(inout),optional :: prob  !! the problem (not used by direct solvers)
     real(wp),dimension(:),intent(inout) :: x  !! the solution x
     real(wp),dimension(:),intent(in) :: b  !! the right-hand side b
     real(wp),intent(in) :: tol  !! tolerance (unused by direct solvers)
     integer :: flag  !! `SUN_SUCCESS` or `SUN_ERR_ARG_INCOMPATIBLE`
 
     flag = SUN_ERR_ARG_INCOMPATIBLE
+    if (.not. present(A)) return
     select type (A)
     type is (band_matrix)
         x = b

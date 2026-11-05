@@ -182,18 +182,22 @@
 !  Band
 !=========================================================================================
 
-    function band_create(n, mu, ml) result(A)
+    function band_create(n, mu, ml, smu) result(A)
     !! `SUNBandMatrix(N, mu, ml)`: an n x n band matrix with upper and lower
     !! bandwidths mu and ml, storage upper bandwidth smu = mu + ml (room for
-    !! the LU fill-in), initialized to zero.
+    !! the LU fill-in), initialized to zero. With `smu` present it is
+    !! `SUNBandMatrixStorage(N, mu, ml, smu)` (smu >= mu; smu >= mu + ml is
+    !! needed for an LU factorization).
     integer(ip),intent(in) :: n  !! number of rows and columns
     integer(ip),intent(in) :: mu  !! upper bandwidth
     integer(ip),intent(in) :: ml  !! lower bandwidth
+    integer(ip),intent(in),optional :: smu  !! storage upper bandwidth (default mu + ml)
     type(band_matrix) :: A  !! the new matrix
     A%n    = n
     A%mu   = mu
     A%ml   = ml
     A%smu  = mu + ml
+    if (present(smu)) A%smu = smu
     A%ldim = A%smu + ml + 1
     allocate(A%data(0:A%ldim-1, 0:n-1), source=0.0_wp)
     end function band_create

@@ -16,12 +16,13 @@
     module fvode_nonlinsol
 
     use fvode_kinds, only: wp, li
+    use fvode_linsol, only: ls_problem
 
     implicit none
 
     private
 
-    type,abstract,public :: nls_problem
+    type,abstract,extends(ls_problem),public :: nls_problem
         !! The problem side of a nonlinear solve: the integrator implements this.
     contains
         procedure(nls_sys_fn),deferred      :: nls_sys       !! `SUNNonlinSolSysFn`

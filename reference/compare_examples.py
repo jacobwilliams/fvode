@@ -4,7 +4,7 @@ For each pair below, run the C example (built by ref-build in
 reference/build/examples) and the FVODE port (already built by fpm), normalize
 both outputs, and diff them:
 
-* lines with workspace lengths are skipped (FVODE does not track workspace),
+* lines with workspace lengths (or lenrw/leniw) are skipped (FVODE does not track workspace),
 * case and whitespace are ignored (C prints 1.0e+00, Fortran 1.0E+00),
 * Fortran's ".608" is read as "0.608".
 
@@ -28,7 +28,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CBIN = ROOT / "reference" / "build" / "examples" / "cvode" / "serial"
 
-# (FVODE example name, C example executable, relative tolerance on reals)
+# (FVODE example name, C example executable, relative tolerance on reals[,
+# command-line arguments for both programs])
 PAIRS = [
     ("cv_direct_demo", "cvDirectDemo_ls", 0.0),
     ("cv_advdiff_bnd", "cvAdvDiff_bnd", 0.0),
@@ -39,6 +40,12 @@ PAIRS = [
     ("cv_roberts_dns_negsol", "cvRoberts_dns_negsol", 1.0e-4),
     ("cv_rocket_dns", "cvRocket_dns", 0.0),
     ("cv_disc_dns", "cvDisc_dns", 0.0),
+    ("cv_diurnal_kry", "cvDiurnal_kry", 0.0),
+    ("cv_diurnal_kry_bp", "cvDiurnal_kry_bp", 0.0),
+    ("cv_krylov_demo_ls", "cvKrylovDemo_ls", 0.0),
+    ("cv_krylov_demo_ls", "cvKrylovDemo_ls", 0.0, ["1"]),  # nrmfac = sqrt(N) given
+    ("cv_krylov_demo_ls", "cvKrylovDemo_ls", 0.0, ["2"]),  # nrmfac from a dot product
+    ("cv_krylov_demo_prec", "cvKrylovDemo_prec", 0.0),
 ]
 
 NUMBER = re.compile(r"^[-+]?(\d+\.\d*|\.\d+|\d+)(e[-+]?\d+)?$")
@@ -65,7 +72,7 @@ def same_line(a: str, b: str, rtol: float) -> bool:
 def normalize(text: str) -> list[str]:
     out = []
     for line in text.splitlines():
-        if "workspace length" in line:
+        if "workspace length" in line or re.match(r"\s*leniw|\s*lenrw", line):
             continue
         line = line.strip().lower()
         if not line:
@@ -80,12 +87,16 @@ def normalize(text: str) -> list[str]:
 
 def main() -> int:
     ok = True
-    for fname, cname, rtol in PAIRS:
-        c = subprocess.run([str(CBIN / cname)], cwd=ROOT / "reference" / "out",
+    for pair in PAIRS:
+        fname, cname, rtol = pair[:3]
+        args = list(pair[3]) if len(pair) > 3 else []
+        c = subprocess.run([str(CBIN / cname), *args], cwd=ROOT / "reference" / "out",
                            capture_output=True, text=True, check=True)
         f = subprocess.run(["fpm", "run", "--example", fname, "--profile", "release",
-                            "--flag", "-ffp-contract=off"],
+                            "--flag", "-ffp-contract=off", *(["--", *args] if args else [])],
                            cwd=ROOT, capture_output=True, text=True, check=True)
+        if args:
+            fname, cname = f"{fname} {' '.join(args)}", f"{cname} {' '.join(args)}"
         a, b = normalize(c.stdout), normalize(f.stdout)
         if len(a) == len(b) and all(same_line(x, y, rtol) for x, y in zip(a, b)):
             ndiff = sum(x != y for x, y in zip(a, b))

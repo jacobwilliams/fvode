@@ -23,9 +23,9 @@
 !
 !### Not yet ported
 !
-!  Iterative linear solvers and preconditioning, projection and history
-!  resizing. Root finding is in the submodule `fvode_core_root`, stability
-!  limit detection in `fvode_core_stald`.
+!  Projection and history resizing. Root finding is in the submodule `fvode_core_root`, stability
+!  limit detection in `fvode_core_stald`, the band preconditioner in
+!  `fvode_core_bandpre`.
 !  The places where the C code handles them are marked `! [not yet ported]`.
 
     module fvode_core
@@ -39,6 +39,7 @@
     use fvode_nonlinsol_newton, only: sun_nonlinsol_newton
     use fvode_matrix, only: sun_matrix, dense_matrix, band_matrix, SUNMATRIX_DENSE, SUNMATRIX_BAND
     use fvode_linsol, only: sun_linear_solver
+    use fvode_linsol_direct, only: sun_linsol_band
 
     implicit none
 
@@ -48,6 +49,11 @@
     integer,parameter :: LS_NONE    = 0  !! none
     integer,parameter :: LS_GENERIC = 1  !! SUNLinearSolver interface (cvode_ls.c)
     integer,parameter :: LS_DIAG    = 2  !! diagonal approximate Jacobian (cvode_diag.c)
+
+    ! which preconditioner is attached (C: cvls_mem->pset, psolve, P_data)
+    integer,parameter :: PRE_NONE    = 0  !! none
+    integer,parameter :: PRE_USER    = 1  !! user psetup/psolve functions
+    integer,parameter :: PRE_BANDPRE = 2  !! band preconditioner (cvode_bandpre.c)
 
     type,extends(nls_problem),public :: cvode_solver
         !! CVODE solver (`CVodeMemRec`).
@@ -172,7 +178,7 @@
         logical :: scalesol = .false.        !! scale the solution for a change in gamma
         real(wp) :: eplifac = CVLS_EPLIN     !! nonlinear -> linear tolerance factor
         real(wp) :: nrmfac = ONE             !! integrator -> LS norm conversion factor
-        class(sun_linear_solver),allocatable :: LS  !! linear solver
+        class(sun_linear_solver),allocatable,public :: LS  !! the attached linear solver (a copy; public so that solver-specific settings can be changed after attaching)
         class(sun_matrix),allocatable :: A          !! A = I - gamma * df/dy
         class(sun_matrix),allocatable :: savedJ     !! saved Jacobian
         real(wp),dimension(:),allocatable :: ls_ytemp !! temporary (jtimes, psolve)
@@ -189,6 +195,24 @@
         integer(li) :: njtimes = 0           !! J*v calls
         real(wp) :: tnlj = ZERO              !! tn at the last Jacobian evaluation
         integer :: ls_last_flag = CVLS_SUCCESS !! last flag from a linear solver function
+        procedure(cv_psetup_fn),pointer,nopass :: pset_user => null()  !! user preconditioner setup function
+        procedure(cv_psolve_fn),pointer,nopass :: psolve_user => null()  !! user preconditioner solve function
+        integer :: pre_kind = PRE_NONE  !! which preconditioner is attached: PRE_NONE, PRE_USER, PRE_BANDPRE
+        logical :: jtimesDQ = .true.  !! use the internal DQ Jacobian-times-vector product
+        procedure(cv_jtsetup_fn),pointer,nopass :: jtsetup_user => null()  !! user J*v setup function
+        procedure(cv_jtimes_fn),pointer,nopass :: jtimes_user => null()  !! user J*v function
+        procedure(cv_rhs_fn),pointer,nopass :: jt_f => null()  !! f used by the DQ J*v (null: the ODE f)
+
+        !---- band preconditioner (CVBandPrecDataRec, cvode_bandpre_impl.h)
+        integer(ip) :: bp_N = 0   !! problem size
+        integer(ip) :: bp_mu = 0  !! upper half-bandwidth of the preconditioner
+        integer(ip) :: bp_ml = 0  !! lower half-bandwidth of the preconditioner
+        type(band_matrix) :: bp_savedJ  !! saved banded Jacobian approximation
+        type(band_matrix) :: bp_savedP  !! P = I - gamma*J (factored)
+        type(sun_linsol_band) :: bp_LS  !! band LU solver for P
+        real(wp),dimension(:),allocatable :: bp_tmp1  !! work vector (f at the perturbed y)
+        real(wp),dimension(:),allocatable :: bp_tmp2  !! work vector (perturbed y)
+        integer(li) :: bp_nfeBP = 0  !! number of f evaluations for the band Jacobian
 
         !---- diagonal linear solver (CVDiagMemRec, cvode_diag_impl.h)
         real(wp) :: di_gammasv = ZERO              !! gamma at the last call to setup
@@ -326,6 +350,19 @@
         procedure,public :: get_last_lin_flag   => CVodeGetLastLinFlag  !! `CVodeGetLastLinFlag`: last linear solver flag
         procedure,public :: get_jac_time        => CVodeGetJacTime  !! `CVodeGetJacTime`: time of the last Jacobian evaluation
         procedure,public :: get_jac_num_steps   => CVodeGetJacNumSteps  !! `CVodeGetJacNumSteps`: step number of the last Jacobian evaluation
+        procedure,public :: set_preconditioner  => CVodeSetPreconditioner  !! `CVodeSetPreconditioner`: user preconditioner (Krylov solvers)
+        procedure,public :: set_jac_times       => CVodeSetJacTimes  !! `CVodeSetJacTimes`: user Jacobian-times-vector product
+        procedure,public :: set_jac_times_rhs_fn => CVodeSetJacTimesRhsFn  !! `CVodeSetJacTimesRhsFn`: f used by the DQ J*v
+        procedure,public :: set_eps_lin         => CVodeSetEpsLin  !! `CVodeSetEpsLin`: linear tolerance factor
+        procedure,public :: set_ls_norm_factor  => CVodeSetLSNormFactor  !! `CVodeSetLSNormFactor`: WRMS -> 2-norm factor
+        procedure,public :: get_num_jtsetup_evals => CVodeGetNumJTSetupEvals  !! `CVodeGetNumJTSetupEvals`
+        procedure,public :: get_num_jtimes_evals => CVodeGetNumJtimesEvals  !! `CVodeGetNumJtimesEvals`
+        procedure,public :: band_prec_init      => CVBandPrecInit  !! `CVBandPrecInit`: band preconditioner (Krylov solvers)
+        procedure,public :: get_band_prec_num_rhs_evals => CVBandPrecGetNumRhsEvals  !! `CVBandPrecGetNumRhsEvals`
+        ! linear solver callbacks (ls_problem)
+        procedure :: ls_atimes => cvLsATimes  !! `cvLsATimes`: z = (I - gamma J) v
+        procedure :: ls_psetup => cvLsPSetup  !! `cvLsPSetup`: preconditioner setup
+        procedure :: ls_psolve => cvLsPSolve  !! `cvLsPSolve`: preconditioner solve
 
         ! root finding (cvode.c / cvode_io.c, submodule fvode_core_root)
         procedure,public :: root_init           => CVodeRootInit  !! `CVodeRootInit`: specify root functions g(t,y)
@@ -394,6 +431,69 @@
             integer :: retval  !! 0 on success, > 0 for a recoverable error, < 0 for an unrecoverable error
         end function cv_jac_fn
 
+        function cv_psetup_fn(me, t, y, fy, jok, jcur, gamma) result(retval)
+            !! Preconditioner setup function (`CVLsPrecSetupFn`): prepare the
+            !! preconditioner for `P ~ I - gamma*J`. If `jok`, saved Jacobian
+            !! data may be reused; set `jcur = .true.` if the Jacobian data was
+            !! recomputed. Return 0 on success, > 0 recoverable, < 0 unrecoverable.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            logical,intent(in) :: jok  !! may saved Jacobian data be reused?
+            logical,intent(out) :: jcur  !! was the Jacobian data recomputed?
+            real(wp),intent(in) :: gamma  !! the scalar gamma in P = I - gamma*J
+            integer :: retval  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cv_psetup_fn
+
+        function cv_psolve_fn(me, t, y, fy, r, z, gamma, delta, lr) result(retval)
+            !! Preconditioner solve function (`CVLsPrecSolveFn`): solve
+            !! `P z = r` (`lr` = 1 left, 2 right preconditioner), approximately
+            !! to the tolerance `delta` if done iteratively. Return 0 on success,
+            !! > 0 recoverable, < 0 unrecoverable.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            real(wp),dimension(:),intent(in) :: r  !! the right-hand side
+            real(wp),dimension(:),intent(out) :: z  !! the solution
+            real(wp),intent(in) :: gamma  !! the scalar gamma in P = I - gamma*J
+            real(wp),intent(in) :: delta  !! tolerance for an iterative solve
+            integer,intent(in) :: lr  !! 1: left preconditioner, 2: right
+            integer :: retval  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cv_psolve_fn
+
+        function cv_jtsetup_fn(me, t, y, fy) result(retval)
+            !! Jacobian-times-vector setup function (`CVLsJacTimesSetupFn`):
+            !! prepare data for [[cv_jtimes_fn]]. Return 0 on success.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            integer :: retval  !! 0 on success, nonzero on failure
+        end function cv_jtsetup_fn
+
+        function cv_jtimes_fn(me, v, Jv, t, y, fy, tmp) result(retval)
+            !! Jacobian-times-vector function (`CVLsJacTimesVecFn`):
+            !! `Jv = J(t,y) v`. Return 0 on success, nonzero on failure.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),dimension(:),intent(in) :: v  !! the vector to multiply
+            real(wp),dimension(:),intent(out) :: Jv  !! the product J*v
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            real(wp),dimension(:),intent(inout) :: tmp  !! work vector
+            integer :: retval  !! 0 on success, nonzero on failure
+        end function cv_jtimes_fn
+
         function cv_root_fn(me, t, y, gout) result(retval)
             !! Root function (`CVRootFn`): compute `gout(i) = g_i(t, y)`,
             !! i = 1..nrtfn. CVODE finds the roots of these functions.
@@ -410,6 +510,7 @@
     end interface
 
     public :: cv_rhs_fn, cv_ewt_fn, cv_jac_fn, cv_root_fn
+    public :: cv_psetup_fn, cv_psolve_fn, cv_jtsetup_fn, cv_jtimes_fn
 
     !-------------------------------------------------------------------------------------
     ! linear solver interface: implemented in submodule fvode_core_ls (cvode_ls.c)
@@ -464,25 +565,118 @@
             integer :: flag  !! always `CVLS_SUCCESS`
         end function cvLsReInitialize
 
-        module function cvLsSetup(me, convfail, ypred, fpred, jcur) result(flag)
-            !! See the implementation in the submodule (`fvode_core_ls`).
+        module function cvLsSetup(me, convfail) result(flag)
+            !! See the implementation in the submodule (`fvode_core_ls`). Uses
+            !! `me%y` (ypred) and `me%ftemp` (fpred), and sets `me%jcur`.
             class(cvode_solver),intent(inout) :: me  !! the CVODE solver
             integer,intent(in) :: convfail  !! convergence failure status (`CV_NO_FAILURES`, `CV_FAIL_BAD_J`, `CV_FAIL_OTHER`)
-            real(wp),dimension(:),intent(in) :: ypred  !! predicted state
-            real(wp),dimension(:),intent(in) :: fpred  !! f at the predicted state
-            logical,intent(out) :: jcur  !! set to `.true.` if the Jacobian was re-evaluated
             integer :: flag  !! 0 on success, > 0 for a recoverable failure, < 0 otherwise
         end function cvLsSetup
 
-        module function cvLsSolve(me, b, weight, ynow, fnow) result(flag)
-            !! See the implementation in the submodule (`fvode_core_ls`).
+        module function cvLsSolve(me, b) result(flag)
+            !! See the implementation in the submodule (`fvode_core_ls`). Uses
+            !! `me%ewt` (weights), `me%y` (ynow) and `me%ftemp` (fnow).
             class(cvode_solver),intent(inout) :: me  !! the CVODE solver
             real(wp),dimension(:),intent(inout) :: b  !! right-hand side on input, solution on output
-            real(wp),dimension(:),intent(in) :: weight  !! error weights
-            real(wp),dimension(:),intent(in) :: ynow  !! current state
-            real(wp),dimension(:),intent(in) :: fnow  !! f at the current state
             integer :: flag  !! 0 on success, 1 for a recoverable failure, -1 for an unrecoverable one
         end function cvLsSolve
+
+        module subroutine CVodeSetPreconditioner(me, psetup, psolve, flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_psetup_fn),optional :: psetup  !! preconditioner setup function (absent: none)
+            procedure(cv_psolve_fn),optional :: psolve  !! preconditioner solve function (absent: none)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+        end subroutine CVodeSetPreconditioner
+
+        module subroutine CVodeSetJacTimes(me, jtsetup, jtimes, flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_jtsetup_fn),optional :: jtsetup  !! J*v setup function (absent: none)
+            procedure(cv_jtimes_fn),optional :: jtimes  !! J*v function (absent: internal DQ)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+        end subroutine CVodeSetJacTimes
+
+        module subroutine CVodeSetJacTimesRhsFn(me, jtimesRhsFn, flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_rhs_fn),optional :: jtimesRhsFn  !! f used by the DQ J*v (absent: the ODE f)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+        end subroutine CVodeSetJacTimesRhsFn
+
+        module subroutine CVodeSetEpsLin(me, eplifac, flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: eplifac  !! linear tolerance factor (0: default 0.05)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+        end subroutine CVodeSetEpsLin
+
+        module subroutine CVodeSetLSNormFactor(me, nrmfac, flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: nrmfac  !! > 0: the factor; < 0: computed as sqrt(dot(1,1)); 0: sqrt(N)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS` or `CVLS_LMEM_NULL`
+        end subroutine CVodeSetLSNormFactor
+
+        module function cvLsATimes(me, v, z) result(flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: v  !! the vector to multiply
+            real(wp),dimension(:),intent(out) :: z  !! z = (I - gamma J) v
+            integer :: flag  !! 0 on success, the jtimes flag otherwise
+        end function cvLsATimes
+
+        module function cvLsPSetup(me) result(flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cvLsPSetup
+
+        module function cvLsPSolve(me, r, z, tol, lr) result(flag)
+            !! Implemented in submodule `fvode_core_ls`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: r  !! the right-hand side
+            real(wp),dimension(:),intent(out) :: z  !! the solution of P z = r
+            real(wp),intent(in) :: tol  !! tolerance
+            integer,intent(in) :: lr  !! `SUN_PREC_LEFT` or `SUN_PREC_RIGHT`
+            integer :: flag  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cvLsPSolve
+
+        ! band preconditioner: submodule fvode_core_bandpre (cvode_bandpre.c)
+
+        module subroutine CVBandPrecInit(me, N, mu, ml, flag)
+            !! Implemented in submodule `fvode_core_bandpre`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer(ip),intent(in) :: N  !! problem size
+            integer(ip),intent(in) :: mu  !! upper half-bandwidth of the preconditioner
+            integer(ip),intent(in) :: ml  !! lower half-bandwidth of the preconditioner
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL`, `CVLS_SUNLS_FAIL`, ...
+        end subroutine CVBandPrecInit
+
+        module function cvBandPrecSetup(me, t, y, fy, jok, jcur, gamma) result(retval)
+            !! Implemented in submodule `fvode_core_bandpre`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            logical,intent(in) :: jok  !! may the saved Jacobian be reused?
+            logical,intent(out) :: jcur  !! was the Jacobian recomputed?
+            real(wp),intent(in) :: gamma  !! the scalar gamma
+            integer :: retval  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cvBandPrecSetup
+
+        module function cvBandPrecSolve(me, r, z) result(retval)
+            !! Implemented in submodule `fvode_core_bandpre`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: r  !! the right-hand side
+            real(wp),dimension(:),intent(out) :: z  !! the solution of P z = r
+            integer :: retval  !! the band solver flag
+        end function cvBandPrecSolve
+
+        module subroutine cvBandPrecFree(me)
+            !! Implemented in submodule `fvode_core_bandpre`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+        end subroutine cvBandPrecFree
 
         module subroutine cvLsFree(me)
             !! See the implementation in the submodule (`fvode_core_ls`).
@@ -3516,7 +3710,7 @@
 
     ! setup the linear system
     select case (me%ls_kind)
-    case (LS_GENERIC); retval = cvLsSetup(me, me%convfail, me%y, me%ftemp, me%jcur)
+    case (LS_GENERIC); retval = cvLsSetup(me, me%convfail)
     case (LS_DIAG);    retval = CVDiagSetup(me, me%y, me%ftemp, me%jcur)
     case default;      retval = -1
     end select
@@ -3555,7 +3749,7 @@
     integer :: retval  !! return flag of the linear solve
 
     select case (me%ls_kind)
-    case (LS_GENERIC); retval = cvLsSolve(me, b, me%ewt, me%y, me%ftemp)
+    case (LS_GENERIC); retval = cvLsSolve(me, b)
     case (LS_DIAG);    retval = CVDiagSolve(me, b)
     case default;      retval = -1
     end select
@@ -4503,6 +4697,24 @@
     class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%nps
     end function CVodeGetNumPrecSolves
+
+    pure integer(li) function CVodeGetNumJTSetupEvals(me) result(v)
+    !! `CVodeGetNumJTSetupEvals`: number of Jacobian-times-vector setup calls.
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = me%njtsetup
+    end function CVodeGetNumJTSetupEvals
+
+    pure integer(li) function CVodeGetNumJtimesEvals(me) result(v)
+    !! `CVodeGetNumJtimesEvals`: number of Jacobian-times-vector calls.
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = me%njtimes
+    end function CVodeGetNumJtimesEvals
+
+    pure integer(li) function CVBandPrecGetNumRhsEvals(me) result(v)
+    !! `CVBandPrecGetNumRhsEvals`: f evaluations for the band preconditioner.
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = me%bp_nfeBP
+    end function CVBandPrecGetNumRhsEvals
 
 !>
 !  `CVodeGetLastLinFlag`: last linear solver flag.
