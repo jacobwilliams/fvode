@@ -20,6 +20,9 @@ source-form = "free"
 
 [dev-dependencies]
 test-drive = { git = "https://github.com/fortran-lang/test-drive", tag = "v0.5.0" }
+ddeabm = { git = "https://github.com/jacobwilliams/ddeabm", tag = "4.0.0" }
+dvode = { git = "https://github.com/jacobwilliams/dvode", rev = "59d2eedd1410a4bd6c196c24d08f95a7c20565c0" }
+pyplot-fortran = { git = "https://github.com/jacobwilliams/pyplot-fortran", tag = "3.8.0" }
 
 [extra.ford]
 project = "fvode"

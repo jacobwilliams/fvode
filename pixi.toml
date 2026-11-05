@@ -10,10 +10,14 @@ gfortran = "16.*"
 fpm = ">=0.13.0,<0.14"
 python = "3.13.*"
 ford = ">=7.0"
+matplotlib-base = "*"  # for the solver comparison plots (pyplot-fortran)
+numpy = "*"
 
 [tasks]
 build = "fpm build --profile release"
 test = "fpm test --profile debug"
+# FVODE vs DVODE and DDEABM: accuracy/cost tables and work-precision plots (test_output/)
+solver-comparison = "fpm test test_solver_comparison --profile release"
 examples = "fpm run --example 'cv_*' --profile release"
 # pixi skips conda post-link scripts, so register the graphviz plugins first
 graphviz-config = "dot -c"

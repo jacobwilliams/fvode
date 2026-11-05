@@ -12,3 +12,4 @@ cvRoberts_dns_stats.csv
 cvPendulum_dns_*.txt
 cvParticle_solution.txt
 cvParticle_error.txt
+test_output/
