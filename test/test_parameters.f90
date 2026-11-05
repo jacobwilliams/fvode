@@ -267,6 +267,7 @@
     call check_real(error, table, 'SUN_UNIT_ROUNDOFF', SUN_UNIT_ROUNDOFF); if (allocated(error)) return
     call check_real(error, table, 'THREE', THREE); if (allocated(error)) return
     call check_real(error, table, 'TINY', CV_TINY); if (allocated(error)) return
+    call check_real(error, table, 'TWOPT5', TWOPT5); if (allocated(error)) return
     call check_real(error, table, 'TWELVE', TWELVE); if (allocated(error)) return
     call check_real(error, table, 'TWO', TWO); if (allocated(error)) return
     call check_real(error, table, 'ZERO', ZERO); if (allocated(error)) return

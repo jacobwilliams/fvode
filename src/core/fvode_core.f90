@@ -23,8 +23,9 @@
 !
 !### Not yet ported
 !
-!  Iterative linear solvers and preconditioning, root finding, inequality
-!  constraints, projection, stability limit detection and history resizing.
+!  Iterative linear solvers and preconditioning, projection and history
+!  resizing. Root finding is in the submodule `fvode_core_root`, stability
+!  limit detection in `fvode_core_stald`.
 !  The places where the C code handles them are marked `! [not yet ported]`.
 
     module fvode_core
@@ -33,7 +34,7 @@
     use fvode_kinds, only: wp, ip, li
     use fvode_parameters
     use fvode_internal_parameters
-    use fvode_nvector, only: n_vwrmsnorm, n_vinvtest
+    use fvode_nvector, only: n_vwrmsnorm, n_vinvtest, n_vconstrmask, n_vminquotient
     use fvode_nonlinsol, only: sun_nonlinear_solver, nls_problem
     use fvode_nonlinsol_newton, only: sun_nonlinsol_newton
     use fvode_matrix, only: sun_matrix, dense_matrix, band_matrix, SUNMATRIX_DENSE, SUNMATRIX_BAND
@@ -210,16 +211,34 @@
         !---- flags
         logical :: MallocDone = .false.  !! init has been called
 
-        !---- stability limit detection  [not yet ported]
+        !---- stability limit detection (STALD)
         logical :: sldeton = .false.  !! is stability limit detection on?
         integer :: nscon = 0         !! counter for STALD method
         integer(li) :: nor = 0       !! number of order reductions
-        real(wp),dimension(6,4) :: ssdat = ZERO  !! scaled data array for STALD
+        real(wp),dimension(0:5,0:3) :: ssdat = ZERO  !! scaled data array for STALD (C: ssdat[6][4], used as [1..5][1..3])
 
-        !---- root finding  [not yet ported]
-        integer :: nrtfn = 0  !! number of root functions
-        integer :: irfnd = 0  !! flag: did the last step find a root?
-        integer(li) :: nge = 0  !! number of root function evaluations
+        !---- root finding
+        procedure(cv_root_fn),pointer,nopass :: gfun => null()  !! function g for the roots sought
+        integer :: nrtfn = 0                         !! number of components of g
+        integer,dimension(:),allocatable :: iroots   !! root information: +-1 for a root in g(i) (direction), 0 otherwise
+        integer,dimension(:),allocatable :: rootdir  !! direction of zero-crossing to look for: +1, -1, or 0 (both)
+        real(wp) :: tlo = ZERO    !! nearest endpoint of the interval in the root search
+        real(wp) :: thi = ZERO    !! farthest endpoint of the interval in the root search
+        real(wp) :: trout = ZERO  !! t value returned by the root search
+        real(wp),dimension(:),allocatable :: glo    !! saved g values at t = tlo
+        real(wp),dimension(:),allocatable :: ghi    !! saved g values at t = thi
+        real(wp),dimension(:),allocatable :: grout  !! g values at t = trout
+        real(wp) :: ttol = ZERO   !! tolerance on the root location trout
+        integer :: irfnd = 0      !! flag: did the last step find a root? (1: yes)
+        integer(li) :: nge = 0    !! number of root function evaluations
+        logical,dimension(:),allocatable :: gactive  !! which root functions are active
+        integer :: mxgnull = 1    !! number of warnings about root functions that are identically 0
+
+        !---- inequality constraints
+        real(wp),dimension(:),allocatable :: constraints  !! constraint flags (allocated: constraints are on)
+        integer(li) :: constraint_corrections = 0  !! total constraint corrections
+        integer(li) :: constraint_fails = 0        !! total constraint failures
+        integer :: max_constraint_fails = MAX_CONSTRAINT_FAILS  !! max constraint failures per step
 
         !---- error reporting (replaces the SUNContext error handler)
         logical :: print_errors = .true.     !! print error and warning messages
@@ -308,6 +327,18 @@
         procedure,public :: get_jac_time        => CVodeGetJacTime  !! `CVodeGetJacTime`: time of the last Jacobian evaluation
         procedure,public :: get_jac_num_steps   => CVodeGetJacNumSteps  !! `CVodeGetJacNumSteps`: step number of the last Jacobian evaluation
 
+        ! root finding (cvode.c / cvode_io.c, submodule fvode_core_root)
+        procedure,public :: root_init           => CVodeRootInit  !! `CVodeRootInit`: specify root functions g(t,y)
+        procedure,public :: set_root_direction  => CVodeSetRootDirection  !! `CVodeSetRootDirection`: directions of zero-crossings to find
+        procedure,public :: set_no_inactive_root_warn => CVodeSetNoInactiveRootWarn  !! `CVodeSetNoInactiveRootWarn`: no warning for g(i) = 0 at t0
+        procedure,public :: get_root_info       => CVodeGetRootInfo  !! `CVodeGetRootInfo`: which root functions have a root
+        ! inequality constraints and stability limit detection (cvode_io.c)
+        procedure,public :: set_constraints     => CVodeSetConstraints  !! `CVodeSetConstraints`: inequality constraints on y
+        procedure,public :: set_max_num_constraint_fails => CVodeSetMaxNumConstraintFails  !! `CVodeSetMaxNumConstraintFails`
+        procedure,public :: get_num_constraint_fails => CVodeGetNumConstraintFails  !! `CVodeGetNumConstraintFails`
+        procedure,public :: get_num_constraint_corrections => CVodeGetNumConstraintCorrections  !! `CVodeGetNumConstraintCorrections`
+        procedure,public :: set_stab_lim_det    => CVodeSetStabLimDet  !! `CVodeSetStabLimDet`: turn stability limit detection on/off (BDF)
+
         ! diagonal linear solver (cvode_diag.c, submodule fvode_core_diag)
         procedure,public :: diag                => CVDiag  !! `CVDiag`: attach the diagonal linear solver
         procedure,public :: get_diag_num_rhs_evals => CVDiagGetNumRhsEvals  !! `CVDiagGetNumRhsEvals`: f evaluations for the diagonal Jacobian
@@ -363,9 +394,22 @@
             integer :: retval  !! 0 on success, > 0 for a recoverable error, < 0 for an unrecoverable error
         end function cv_jac_fn
 
+        function cv_root_fn(me, t, y, gout) result(retval)
+            !! Root function (`CVRootFn`): compute `gout(i) = g_i(t, y)`,
+            !! i = 1..nrtfn. CVODE finds the roots of these functions.
+            !! Return 0 on success, nonzero on failure.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current value of the independent variable
+            real(wp),dimension(:),intent(in) :: y  !! current value of the dependent variable vector
+            real(wp),dimension(:),intent(out) :: gout  !! the root function values g_i(t, y)
+            integer :: retval  !! 0 on success, nonzero on failure
+        end function cv_root_fn
+
     end interface
 
-    public :: cv_rhs_fn, cv_ewt_fn, cv_jac_fn
+    public :: cv_rhs_fn, cv_ewt_fn, cv_jac_fn, cv_root_fn
 
     !-------------------------------------------------------------------------------------
     ! linear solver interface: implemented in submodule fvode_core_ls (cvode_ls.c)
@@ -444,6 +488,62 @@
             !! See the implementation in the submodule (`fvode_core_ls`).
             class(cvode_solver),intent(inout) :: me  !! the CVODE solver
         end subroutine cvLsFree
+
+        ! root finding: submodule fvode_core_root (cvode.c)
+
+        module subroutine CVodeRootInit(me, nrtfn, g, flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(in) :: nrtfn  !! number of root functions (<= 0: turn root finding off)
+            procedure(cv_root_fn),optional :: g  !! the root function
+            integer,intent(out) :: flag  !! `CV_SUCCESS`, `CV_ILL_INPUT` or `CV_MEM_FAIL`
+        end subroutine CVodeRootInit
+
+        module subroutine CVodeSetRootDirection(me, rootdir, flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,dimension(:),intent(in) :: rootdir  !! direction for each root function: +1 increasing, -1 decreasing, 0 both
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_ILL_INPUT`
+        end subroutine CVodeSetRootDirection
+
+        module subroutine CVodeSetNoInactiveRootWarn(me, flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(out) :: flag  !! `CV_SUCCESS`
+        end subroutine CVodeSetNoInactiveRootWarn
+
+        module subroutine CVodeGetRootInfo(me, rootsfound)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(in) :: me  !! the CVODE solver
+            integer,dimension(:),intent(out) :: rootsfound  !! +1 / -1: root of g(i) found, increasing / decreasing; 0: none
+        end subroutine CVodeGetRootInfo
+
+        module function cvRcheck1(me) result(flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! `CV_SUCCESS` or `CV_RTFUNC_FAIL`
+        end function cvRcheck1
+
+        module function cvRcheck2(me) result(flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! `CV_SUCCESS`, `RTFOUND`, `CLOSERT` or `CV_RTFUNC_FAIL`
+        end function cvRcheck2
+
+        module function cvRcheck3(me, tout, itask) result(flag)
+            !! Implemented in submodule `fvode_core_root`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: tout  !! the user's output time
+            integer,intent(in) :: itask  !! `CV_NORMAL` or `CV_ONE_STEP`
+            integer :: flag  !! `CV_SUCCESS`, `RTFOUND` or `CV_RTFUNC_FAIL`
+        end function cvRcheck3
+
+        ! stability limit detection: submodule fvode_core_stald (cvode.c)
+
+        module subroutine cvBDFStab(me)
+            !! Implemented in submodule `fvode_core_stald`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+        end subroutine cvBDFStab
 
         ! diagonal linear solver: submodule fvode_core_diag (cvode_diag.c)
 
@@ -553,7 +653,17 @@
     me%dgmax_lsetup = DGMAX_LSETUP_DEFAULT
     me%convfail     = CV_NO_FAILURES
 
-    ! [not yet ported] constraints, root finding, projection, resize
+    ! initialize constraint variables
+    me%constraint_corrections = 0
+    me%constraint_fails       = 0
+    me%max_constraint_fails   = MAX_CONSTRAINT_FAILS
+
+    ! initialize root finding variables
+    me%gfun    => null()
+    me%nrtfn   = 0
+    me%mxgnull = 1
+
+    ! [not yet ported] projection, resize
 
     ! set the saved value qmax_alloc
     me%qmax_alloc = maxord
@@ -652,7 +762,7 @@
     me%nor = 0
     do i = 1, 5
         do k = 1, 3
-            me%ssdat(i,k) = ZERO
+            me%ssdat(i-1,k-1) = ZERO
         end do
     end do
 
@@ -720,7 +830,8 @@
 
     me%irfnd = 0
 
-    ! [not yet ported] constraint counters
+    me%constraint_corrections = 0
+    me%constraint_fails       = 0
 
     select case (me%ls_kind)
     case (LS_GENERIC); flag = cvLsReInitialize(me)
@@ -736,7 +847,7 @@
     me%nor = 0
     do i = 1, 5
         do k = 1, 3
-            me%ssdat(i,k) = ZERO
+            me%ssdat(i-1,k-1) = ZERO
         end do
     end do
 
@@ -894,6 +1005,9 @@
     integer :: retval, hflag, kflag, istate, ier  !! return flags of f, cvHin, cvStep, the call, and CVodeGetDky / cvInitialSetup
     integer :: ewtsetOK  !! return flag of the error weight function (0: success)
     real(wp) :: troundoff, tout_hin, rh, nrm  !! roundoff in t, tout used by cvHin, |h|/hmax, norm of zn(:,0)
+    integer :: irfndp  !! value of irfnd on entry (did the previous step find a root?)
+    integer :: ir  !! root function index
+    logical :: inactive_roots  !! are some root functions inactive after the first step?
 
     tret = me%tretlast
 
@@ -1001,7 +1115,16 @@
 
         me%zn(:,1) = me%h*me%zn(:,1)
 
-        ! [not yet ported] root finding: cvRcheck1
+        ! check for zeros of root function g at and near t0
+        if (me%nrtfn > 0) then
+            retval = cvRcheck1(me)
+            if (retval == CV_RTFUNC_FAIL) then
+                call cvProcessError(me, CV_RTFUNC_FAIL, 'cvRcheck1', 'At '//t_str(me%tn)// &
+                    ', the rootfinding routine failed in an unrecoverable manner.')
+                flag = CV_RTFUNC_FAIL
+                return
+            end if
+        end if
 
     end if ! end of first call block
 
@@ -1016,7 +1139,65 @@
         ! and step size)
         troundoff = FUZZ_FACTOR * me%uround * (abs(me%tn) + abs(me%h))
 
-        ! [not yet ported] root finding: cvRcheck2 / cvRcheck3
+        ! first, check for a root in the last step taken, other than the
+        ! last root found, if any. If itask = CV_ONE_STEP and y(tn) was not
+        ! returned because of an intervening root, return y(tn) now.
+        if (me%nrtfn > 0) then
+
+            irfndp = me%irfnd
+
+            retval = cvRcheck2(me)
+
+            if (retval == CLOSERT) then
+                call cvProcessError(me, CV_ILL_INPUT, 'cvRcheck2', &
+                    'Root found at and very near '//t_str(me%tlo)//'.')
+                flag = CV_ILL_INPUT
+                return
+            else if (retval == CV_RTFUNC_FAIL) then
+                call cvProcessError(me, CV_RTFUNC_FAIL, 'cvRcheck2', 'At '//t_str(me%tlo)// &
+                    ', the rootfinding routine failed in an unrecoverable manner.')
+                flag = CV_RTFUNC_FAIL
+                return
+            else if (retval == RTFOUND) then
+                me%tretlast = me%tlo
+                tret = me%tretlast
+                yout = me%y    ! (C: cv_y is yout)
+                flag = CV_ROOT_RETURN
+                return
+            end if
+
+            ! if tn is distinct from tretlast (within roundoff),
+            ! check remaining interval for roots
+            if (abs(me%tn - me%tretlast) > troundoff) then
+
+                retval = cvRcheck3(me, tout, itask)
+
+                if (retval == CV_SUCCESS) then      ! no root found
+                    me%irfnd = 0
+                    if ((irfndp == 1) .and. (itask == CV_ONE_STEP)) then
+                        me%tretlast = me%tn
+                        tret = me%tretlast
+                        yout = me%zn(:,0)
+                        flag = CV_SUCCESS
+                        return
+                    end if
+                else if (retval == RTFOUND) then    ! a new root was found
+                    me%irfnd = 1
+                    me%tretlast = me%tlo
+                    tret = me%tretlast
+                    yout = me%y    ! (C: cv_y is yout)
+                    flag = CV_ROOT_RETURN
+                    return
+                else if (retval == CV_RTFUNC_FAIL) then  ! g failed
+                    call cvProcessError(me, CV_RTFUNC_FAIL, 'cvRcheck3', 'At '//t_str(me%tlo)// &
+                        ', the rootfinding routine failed in an unrecoverable manner.')
+                    flag = CV_RTFUNC_FAIL
+                    return
+                end if
+
+            end if
+
+        end if ! end of root stop check
 
         ! in CV_NORMAL mode, test if tout was reached
         ! (tstop checks come first)
@@ -1172,7 +1353,45 @@
             if (abs(me%tn - me%tstop) <= troundoff) me%tn = me%tstop
         end if
 
-        ! [not yet ported] root finding: cvRcheck3
+        ! check for root in last step taken
+        if (me%nrtfn > 0) then
+
+            retval = cvRcheck3(me, tout, itask)
+
+            if (retval == RTFOUND) then  ! a new root was found
+                me%irfnd = 1
+                istate = CV_ROOT_RETURN
+                me%tretlast = me%tlo
+                tret = me%tretlast
+                yout = me%y    ! (C: cv_y is yout)
+                exit
+            else if (retval == CV_RTFUNC_FAIL) then  ! g failed
+                call cvProcessError(me, CV_RTFUNC_FAIL, 'cvRcheck3', 'At '//t_str(me%tlo)// &
+                    ', the rootfinding routine failed in an unrecoverable manner.')
+                istate = CV_RTFUNC_FAIL
+                exit
+            end if
+
+            ! if we are at the end of the first step and we still have
+            ! some event functions that are inactive, issue a warning
+            ! as this may indicate a user error in the implementation
+            ! of the root function.
+            if (me%nst == 1) then
+                inactive_roots = .false.
+                do ir = 1, me%nrtfn
+                    if (.not. me%gactive(ir)) then
+                        inactive_roots = .true.
+                        exit
+                    end if
+                end do
+                if ((me%mxgnull > 0) .and. inactive_roots) then
+                    call cvProcessError(me, CV_WARNING, 'CVode', &
+                        'At the end of the first step, there are still some root functions '// &
+                        'identically 0. This warning will not be issued again.')
+                end if
+            end if
+
+        end if
 
         ! in CV_NORMAL mode, test if tout was reached
         ! (tstop checks come first)
@@ -1311,6 +1530,9 @@
     call cvFreeVectors(me)
     if (allocated(me%NLS)) deallocate(me%NLS)
     call cvLFree(me)
+    call cvFreeRoots(me)
+    me%nrtfn = 0
+    me%gfun => null()
     me%MallocDone = .false.
     me%f => null()
     me%efun_user => null()
@@ -1321,6 +1543,24 @@
 !=========================================================================================
 !  Private helper functions (cvode.c)
 !=========================================================================================
+
+!*****************************************************************************************
+!>
+!  Free the root finding arrays (C: `free(cv_mem->cv_glo)` etc.).
+
+    subroutine cvFreeRoots(me)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+
+    if (allocated(me%glo))     deallocate(me%glo)
+    if (allocated(me%ghi))     deallocate(me%ghi)
+    if (allocated(me%grout))   deallocate(me%grout)
+    if (allocated(me%iroots))  deallocate(me%iroots)
+    if (allocated(me%rootdir)) deallocate(me%rootdir)
+    if (allocated(me%gactive)) deallocate(me%gactive)
+
+    end subroutine cvFreeRoots
+!*****************************************************************************************
 
 !*****************************************************************************************
 !>
@@ -1383,6 +1623,7 @@
     if (allocated(me%y))       deallocate(me%y)
     if (allocated(me%zn))      deallocate(me%zn)
     if (allocated(me%Vabstol)) deallocate(me%Vabstol)
+    if (allocated(me%constraints)) deallocate(me%constraints)
     me%n = 0
 
     end subroutine cvFreeVectors
@@ -1401,6 +1642,7 @@
 
     integer :: ier  !! return flag of the called functions
     real(wp) :: tdist, tround  !! distance to tout and roundoff in t
+    logical :: conOK  !! does y0 satisfy the constraints?
 
     ! check that tout is not too close to the initial time
     tdist  = abs(tout - me%tn)
@@ -1421,7 +1663,16 @@
         return
     end if
 
-    ! [not yet ported] check constraints against y0
+    ! check to see if y0 satisfies constraints
+    if (allocated(me%constraints)) then
+        conOK = n_vconstrmask(me%constraints, me%zn(:,0), me%tempv)
+        if (.not. conOK) then
+            call cvProcessError(me, CV_ILL_INPUT, 'cvInitialSetup', &
+                                'y0 fails to satisfy constraints.')
+            flag = CV_ILL_INPUT
+            return
+        end if
+    end if
 
     ! load initial error weights
     ier = cvEwtSet(me, me%zn(:,0), me%ewt)
@@ -1684,9 +1935,12 @@
     ! are we computing sensitivities with the simultaneous approach?
     integer :: ncf  !! corrector failures in this step attempt
     integer :: nef  !! error test failures in this step attempt
+    integer :: step_constraint_fails  !! constraint failures in this step attempt
+    integer :: cflag  !! return flag of cvCheckConstraints
 
     ncf = 0
     nef = 0
+    step_constraint_fails = 0
 
     ! if the step size has changed, update the history array
     if ((me%nst > 0) .and. (me%hprime /= me%h)) call cvAdjustParams(me)
@@ -1714,7 +1968,18 @@
             return
         end if
 
-        ! [not yet ported] check if constraints are satisfied
+        ! check if constraints are satisfied
+        if (allocated(me%constraints)) then
+            cflag = cvCheckConstraints(me, nflag, saved_t, step_constraint_fails)
+            ! go back in loop if we need to predict again (nflag=PREV_CONV_FAIL)
+            if (cflag == PREDICT_AGAIN) cycle
+            ! return if predict again was not possible
+            if (cflag /= CV_SUCCESS) then
+                flag = cflag
+                return
+            end if
+        end if
+
         ! [not yet ported] perform projection
 
         ! perform error test (nflag=CV_SUCCESS)
@@ -1742,7 +2007,7 @@
 
     ! if Stablilty Limit Detection is turned on, call stability limit
     ! detection routine for possible order reduction
-    ! [not yet ported] if (me%sldeton) call cvBDFStab(me)
+    if (me%sldeton) call cvBDFStab(me)
 
     if (me%nst <= me%small_nst) then
         me%etamax = me%eta_max_es
@@ -2352,6 +2617,104 @@
     me%jcur = .false.
 
     end function cvNls
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `cvCheckConstraints`: check whether the corrected solution `y` satisfies
+!  the inequality constraints. If not, try to correct acor so that the
+!  violating components are moved onto the constraint boundary (if the
+!  correction is small, compared with the nonlinear tolerance `tq(4)`).
+!  Otherwise restore the history, reduce the step size, and return
+!  `PREDICT_AGAIN` (or `CV_CONSTR_FAIL` if h cannot be reduced further).
+
+    function cvCheckConstraints(me, nflag, saved_t, step_constraint_fails) result(flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(inout) :: nflag  !! nonlinear solver flag (set to `PREV_CONV_FAIL` on retry)
+    real(wp),intent(in) :: saved_t  !! time to restore to on failure
+    integer,intent(inout) :: step_constraint_fails  !! constraint failures in this step attempt
+    integer :: flag  !! `CV_SUCCESS`, `PREDICT_AGAIN` or `CV_CONSTR_FAIL`
+
+    logical :: constraintsPassed  !! are all constraints satisfied?
+    real(wp) :: vnorm  !! weighted norm of the proposed correction
+
+    associate (mm => me%ftemp, tmp => me%tempv)  ! mm: mask of the violated constraints
+
+    ! get mask vector mm, set where constraints failed
+    constraintsPassed = n_vconstrmask(me%constraints, me%y, mm)
+    if (constraintsPassed) then
+        flag = CV_SUCCESS
+        return
+    end if
+
+    ! constraints not met: compute the proposed correction
+    ! tmp = mm * (y - 0.1 * c' / ewt), where c' = c for |c| = 2 (strict
+    ! inequality: keep a small margin from zero) and 0 for |c| = 1, and
+    ! check if it is small enough to be applied
+    tmp = merge(ONE, ZERO, abs(me%constraints) >= ONEPT5)   ! N_VCompare
+    tmp = tmp * me%constraints
+    tmp = tmp / me%ewt
+    me%vtemp1 = -PT1 * tmp
+    tmp = me%y - PT1 * tmp
+    tmp = tmp * mm
+
+    vnorm = n_vwrmsnorm(tmp, me%ewt)
+
+    ! if vnorm is small enough, correct acor so that y = zn[0] + acor satisfies
+    ! the constraints, and continue
+    if (vnorm <= me%tq(4)) then
+
+        me%constraint_corrections = me%constraint_corrections + 1
+
+        ! acor = acor - mm*acor - mm*zn[0] - mm*vtemp1, so that the violating
+        ! components of y become 0.1*c'/ewt (just inside the constraint)
+        tmp = mm * me%acor
+        me%acor = me%acor - tmp
+        tmp = mm * me%zn(:,0)
+        me%acor = me%acor - tmp
+        me%vtemp1 = mm * me%vtemp1
+        me%acor = me%acor - me%vtemp1
+
+        flag = CV_SUCCESS
+        return
+    end if
+
+    ! the correction is too large: reduce the step size
+    step_constraint_fails = step_constraint_fails + 1
+    me%constraint_fails = me%constraint_fails + 1
+
+    ! restore zn
+    call cvRestore(me, saved_t)
+
+    ! check for |h| == hmin
+    if (abs(me%h) <= me%hmin * ONEPSM) then
+        flag = CV_CONSTR_FAIL
+        return
+    end if
+
+    ! check for max step attempt failures
+    if (step_constraint_fails == me%max_constraint_fails) then
+        flag = CV_CONSTR_FAIL
+        return
+    end if
+
+    ! reduce h by computing eta = h'/h: the largest ratio (times 0.9) that keeps
+    ! the violating components on the right side, bounded below by 0.1
+    tmp = me%zn(:,0) - me%y
+    tmp = mm * tmp
+
+    me%eta = PT9 * n_vminquotient(me%zn(:,0), tmp)
+    me%eta = max(me%eta, PT1)
+    me%eta = max(me%eta, me%hmin / abs(me%h))
+    call cvRescale(me)
+    nflag = PREV_CONV_FAIL
+
+    flag = PREDICT_AGAIN
+
+    end associate
+
+    end function cvCheckConstraints
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -3874,6 +4237,102 @@
     end subroutine CVodeSetEtaConvFail
 !*****************************************************************************************
 
+!*****************************************************************************************
+!>
+!  `CVodeSetConstraints`: inequality constraints on the solution
+!  (0: none, 1: y_i >= 0, -1: y_i <= 0, 2: y_i > 0, -2: y_i < 0). Without
+!  `constraints`, the constraints are turned off.
+
+    subroutine CVodeSetConstraints(me, constraints, flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),dimension(:),intent(in),optional :: constraints  !! constraint flag for each component
+    integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_ILL_INPUT`
+
+    real(wp) :: temptest  !! max |constraints(i)|
+
+    if (.not. me%MallocDone) then
+        call cvProcessError(me, CV_NO_MALLOC, 'CVodeSetConstraints', 'Attempt to call before CVodeInit.')
+        flag = CV_NO_MALLOC
+        return
+    end if
+
+    ! if there are no constraints, destroy data structures
+    if (.not. present(constraints)) then
+        if (allocated(me%constraints)) deallocate(me%constraints)
+        flag = CV_SUCCESS
+        return
+    end if
+
+    if (size(constraints, kind=ip) /= me%n) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetConstraints', 'constraints has the wrong size.')
+        flag = CV_ILL_INPUT
+        return
+    end if
+
+    ! check the constraints vector
+    temptest = maxval(abs(constraints))
+    if ((temptest > TWOPT5) .or. (temptest < HALF)) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetConstraints', &
+                            'Illegal values in constraints vector.')
+        flag = CV_ILL_INPUT
+        return
+    end if
+
+    ! load the constraints vector
+    me%constraints = constraints
+
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetConstraints
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetMaxNumConstraintFails`: maximum number of constraint failures in
+!  a step attempt (<= 0 restores the default, 10).
+
+    subroutine CVodeSetMaxNumConstraintFails(me, max_fails, flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: max_fails  !! maximum number of constraint failures per step
+    integer,intent(out) :: flag  !! `CV_SUCCESS`
+
+    if (max_fails <= 0) then
+        me%max_constraint_fails = MAX_CONSTRAINT_FAILS
+    else
+        me%max_constraint_fails = max_fails
+    end if
+
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetMaxNumConstraintFails
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetStabLimDet`: turn the BDF stability limit detection on or off.
+
+    subroutine CVodeSetStabLimDet(me, sldet, flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    logical,intent(in) :: sldet  !! use stability limit detection?
+    integer,intent(out) :: flag  !! `CV_SUCCESS`, or `CV_ILL_INPUT` for the Adams method
+
+    if (sldet .and. (me%lmm /= CV_BDF)) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetStabLimDet', &
+            'Attempt to use stability limit detection with the CV_ADAMS method illegal.')
+        flag = CV_ILL_INPUT
+        return
+    end if
+
+    me%sldeton = sldet
+
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetStabLimDet
+!*****************************************************************************************
+
 !=========================================================================================
 !  Optional outputs (cvode_io.c)
 !=========================================================================================
@@ -3975,6 +4434,20 @@
     class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%ncfn
     end function CVodeGetNumStepSolveFails
+
+!>
+!  `CVodeGetNumConstraintFails`: number of constraint failures.
+    pure integer(li) function CVodeGetNumConstraintFails(me) result(v)
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = me%constraint_fails
+    end function CVodeGetNumConstraintFails
+
+!>
+!  `CVodeGetNumConstraintCorrections`: number of constraint corrections.
+    pure integer(li) function CVodeGetNumConstraintCorrections(me) result(v)
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = me%constraint_corrections
+    end function CVodeGetNumConstraintCorrections
 
     pure integer(li) function CVDiagGetNumRhsEvals(me) result(v)
     !! f evaluations for the diagonal Jacobian approximation
@@ -4143,8 +4616,8 @@
     call put_long('Steps', me%nst)
     call put_long('Error test fails', me%netf)
     call put_long('NLS step fails', me%ncfn)
-    call put_long('Constraint fails', 0_li)          ! [not yet ported] constraints
-    call put_long('Constraint corrections', 0_li)
+    call put_long('Constraint fails', me%constraint_fails)
+    call put_long('Constraint corrections', me%constraint_corrections)
     call put_real('Initial step size', me%h0u)
     call put_real('Last step size', me%hu)
     call put_real('Current step size', me%next_h)
@@ -4199,7 +4672,7 @@
             write(iunit, '(a," = ",a)') pad(name), g_str(value)
         else
             if (.not. present(start)) write(iunit, '(a)', advance='no') ','
-            write(iunit, '(a,",",es23.15e3)', advance='no') name, value
+            write(iunit, '(a,",",a)', advance='no') name, e_str(value)
         end if
         end subroutine put_real
 
@@ -4277,13 +4750,86 @@
 !=========================================================================================
 
     function g_str(x) result(s)
-    !! A real formatted with 15 significant digits.
+    !! A real formatted like C's `%.15g` (`SUN_FORMAT_G` in double precision):
+    !! 15 significant digits, fixed notation if the decimal exponent is in
+    !! [-4, 15), otherwise exponential notation, trailing zeros removed.
     real(wp),intent(in) :: x  !! value to format
     character(len=:),allocatable :: s  !! formatted value
-    character(len=32) :: buf  !! write buffer
-    write(buf, '(es22.15)') x
-    s = trim(adjustl(buf))
+    integer,parameter :: p = 15  !! number of significant digits
+    character(len=64) :: buf  !! write buffer
+    character(len=16) :: fmt  !! run-time format for the fixed notation
+    character(len=:),allocatable :: mant  !! mantissa digits (exponential notation)
+    integer :: ie  !! position of the exponent letter in buf
+    integer :: iexp  !! decimal exponent (after rounding to p digits)
+    if (x /= x) then
+        s = 'nan'
+        return
+    else if (abs(x) > huge(x)) then
+        s = merge('-inf', 'inf ', x < 0.0_wp)
+        s = trim(s)
+        return
+    else if (x == 0.0_wp) then
+        s = merge('-0', '0 ', sign(1.0_wp, x) < 0.0_wp)
+        s = trim(s)
+        return
+    end if
+    ! exponent after rounding to p significant digits
+    write(buf, '(es30.14e3)') x
+    buf = adjustl(buf)
+    ie = index(buf, 'E')
+    read(buf(ie+1:), *) iexp
+    if (iexp < -4 .or. iexp >= p) then
+        mant = strip_zeros(buf(1:ie-1))
+        write(buf, '(a,"e",sp,i0.2)') mant, iexp
+        s = trim(buf)
+    else
+        write(fmt, '(a,i0,a)') '(f0.', p - 1 - iexp, ')'
+        write(buf, fmt) x
+        buf = adjustl(buf)
+        if (buf(1:1) == '.') buf = '0'//buf
+        if (buf(1:2) == '-.') buf = '-0'//buf(2:)
+        s = strip_zeros(trim(buf))
+    end if
     end function g_str
+
+    function e_str(x) result(s)
+    !! A real formatted like C's `% .15e` (`SUN_FORMAT_E` in double precision):
+    !! a space or minus sign, 16 significant digits, a lowercase `e` and an
+    !! exponent of at least two digits.
+    real(wp),intent(in) :: x  !! value to format
+    character(len=:),allocatable :: s  !! formatted value
+    character(len=64) :: buf  !! write buffer
+    integer :: ie  !! position of the exponent letter in buf
+    integer :: iexp  !! decimal exponent
+    if (x /= x .or. abs(x) > huge(x)) then
+        s = ' '//g_str(x)
+        return
+    end if
+    write(buf, '(es30.15e3)') x
+    buf = adjustl(buf)
+    ie = index(buf, 'E')
+    read(buf(ie+1:), *) iexp
+    write(buf, '(a,"e",sp,i0.2)') buf(1:ie-1), iexp
+    s = trim(buf)
+    if (s(1:1) /= '-') s = ' '//s
+    end function e_str
+
+    pure function strip_zeros(str) result(s)
+    !! Remove trailing zeros after the decimal point, and the point itself if
+    !! nothing follows it (C `%g` behavior).
+    character(len=*),intent(in) :: str  !! number with a decimal point
+    character(len=:),allocatable :: s  !! the stripped number
+    integer :: n  !! length of the result
+    s = trim(str)
+    if (index(s, '.') == 0) return
+    n = len(s)
+    do while (n > 0)
+        if (s(n:n) /= '0') exit
+        n = n - 1
+    end do
+    if (s(n:n) == '.') n = n - 1
+    s = s(1:n)
+    end function strip_zeros
 
     function t_str(t) result(s)
     !! `MSG_TIME`: "t = <t>"

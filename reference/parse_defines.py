@@ -9,7 +9,7 @@ import re
 import sys
 from pathlib import Path
 
-FILES = ["cvode.c", "cvode_nls.c", "cvode_ls.c", "cvode_diag.c", "cvode_bandpre.c"]
+FILES = ["cvode.c", "cvode_io.c", "cvode_nls.c", "cvode_ls.c", "cvode_diag.c", "cvode_bandpre.c"]
 DEFINE = re.compile(r"^#define\s+([A-Z][A-Z0-9_]*)\s+(.+?)\s*(?:/\*.*)?$")
 RCONST = re.compile(r"^SUN_RCONST\(\s*([-+0-9.eE]+)\s*\)$")
 INT = re.compile(r"^[-+]?\d+$")

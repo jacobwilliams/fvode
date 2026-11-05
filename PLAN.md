@@ -222,7 +222,7 @@ because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `
 | `ref-run` | [reference/run_reference.sh](reference/run_reference.sh): regenerate `test/data/sundials_constants.txt`, then build and run every `reference/trace_*.c` into `reference/out/trace_*.csv` |
 | `fvode-traces` | [reference/run_fvode_traces.sh](reference/run_fvode_traces.sh): run every FVODE trace driver `reference/fortran/trace_*.f90` (fpm examples) into `reference/out/fvode_*.csv` |
 | `compare-exact` | diagnostic: FVODE trace drivers built with `-ffp-contract=off`; reports how long each trace stays bit-for-bit identical to C, then applies the tolerance checks ([reference/compare.py](reference/compare.py) `--exact`) |
-| `compare-examples` | [reference/compare_examples.py](reference/compare_examples.py): run each C example and its FVODE port (no FMA) and require identical output |
+| `compare-examples` | [reference/compare_examples.py](reference/compare_examples.py): run each C example and its FVODE port (no FMA) and require identical output (optionally a per-example relative tolerance on reals; integers always exact) |
 | `compare` | sanity check of the normal optimized build (tolerances; see §6) |
 
 We build the reference from source at the pinned tag, not from the conda-forge `sundials`
@@ -391,7 +391,40 @@ Original task list:
 * **Exit criterion:** `cvRoberts_dns` (without roots), `cvAdvDiff_bnd`, all of `cvDirectDemo_ls`
   match the traces and `.out` files.
 
-### Phase 4: Root finding, constraints, stability limit detection
+### Phase 4: Root finding, constraints, stability limit detection ✅ done
+Delivered:
+* Submodule `fvode_core_root`: `root_init`, `cvRcheck1/2/3`, `cvRootfind` (Illinois
+  algorithm), `set_root_direction`, `set_no_inactive_root_warn`, `get_root_info`, and the
+  root hooks in `CVode` (including the inactive-root warning).
+* Inequality constraints in `fvode_core`: `set_constraints`, `set_max_num_constraint_fails`,
+  `cvCheckConstraints`, the y0 check in `cvInitialSetup`, the sign adjustments in the dense
+  and band DQ Jacobians, and the constraint counters and getters.
+* Submodule `fvode_core_stald`: `cvBDFStab`, `cvSLdet`, `set_stab_lim_det`. `ssdat` is
+  `(0:5,0:3)`, because C uses `ssdat[1..5][1..3]` but initializes `ssdat[0..4][0..2]`.
+* `%.15g` and `% .15e` formatting (`g_str`, `e_str`), so messages and `print_all_stats`
+  print numbers exactly like C.
+* Examples: `cv_roberts_dns` (roots, user Jacobian, `print_all_stats` table and CSV),
+  `cv_roberts_dns_constraints`, `cv_roberts_dns_negsol` (recoverable RHS failures, user
+  data), `cv_rocket_dns` (switching root functions, reinit) and `cv_disc_dns` (stop times,
+  reinit). Unit tests for root location/direction, a root at t0, constraint input checks,
+  and STALD input.
+
+Verification:
+* `compare-examples`: all five new ports print output identical to the C examples, and
+  `cv_roberts_dns`'s CSV statistics file matches too. The exception is
+  `cv_roberts_dns_negsol`: its last two printed values differ by ~1e-12 absolute because of
+  `x**i` vs `SUNRpowerI` (confirmed identical with a loop), so it is compared with
+  `rtol = 1e-4` on reals. All statistics are identical.
+* New trace `osc_bdf_stald` (a fast damped oscillation plus a slow decay, STALD on, 171
+  order reductions): bit-for-bit identical to C over all 17,470 steps in `compare-exact`.
+* `compare` now allows `|dy/dt| * |Δt|` in the y columns, so phase drift in fast
+  oscillations doesn't count as a mismatch. Checked against the exact solution: both runs
+  stay accurate.
+
+Upstream quirk: `CVodeRootInit` with the same `nrtfn` and a NULL `g` frees the root arrays but
+keeps `nrtfn`; FVODE also turns root finding off in that case.
+
+Original task list:
 * `cvRcheck1`, `cvRcheck2`, `cvRcheck3`, `cvRootfind` (Illinois algorithm), `CVodeRootInit`,
   `SetRootDirection`, `SetNoInactiveRootWarn`, `GetRootInfo`.
 * `cvCheckConstraints` and `CVodeSetConstraints`.

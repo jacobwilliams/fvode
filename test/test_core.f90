@@ -33,7 +33,12 @@
                   new_unittest("get_dky",         test_get_dky),     &
                   new_unittest("stop_time",       test_stop_time),   &
                   new_unittest("input_checks",    test_input_checks),&
-                  new_unittest("flag_names",      test_flag_names)   ]
+                  new_unittest("flag_names",      test_flag_names),  &
+                  new_unittest("root_location",   test_root_location), &
+                  new_unittest("root_direction",  test_root_direction), &
+                  new_unittest("root_at_t0",      test_root_at_t0),  &
+                  new_unittest("constraints_input", test_constraints_input), &
+                  new_unittest("stald_input",     test_stald_input)  ]
 
     end subroutine collect_core
 !*****************************************************************************************
@@ -247,6 +252,189 @@
     call check(error, CVodeGetReturnFlagName(12345), 'NONE')
 
     end subroutine test_flag_names
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Root function for [[decay]]: g(1) = y(1) - 0.5 (a root at t = ln 2,
+!  decreasing).
+
+    function g_half(me, t, y, gout) result(retval)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (not used)
+    real(wp),intent(in) :: t  !! current time (not used)
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(out) :: gout  !! root function value
+    integer :: retval  !! 0 (success)
+
+    gout(1) = y(1) - 0.5_wp
+    retval = 0
+
+    end function g_half
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Root function for [[decay]]: g(1) = y(1) - 1, which is zero at t0.
+
+    function g_at_t0(me, t, y, gout) result(retval)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (not used)
+    real(wp),intent(in) :: t  !! current time (not used)
+    real(wp),dimension(:),intent(in) :: y  !! current solution
+    real(wp),dimension(:),intent(out) :: gout  !! root function value
+    integer :: retval  !! 0 (success)
+
+    gout(1) = y(1) - 1.0_wp
+    retval = 0
+
+    end function g_at_t0
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  A root of y1 - 0.5 is located at t = ln 2, decreasing, and the
+!  integration then continues to tout.
+
+    subroutine test_root_location(error)
+
+    type(error_type),allocatable,intent(out) :: error  !! test error (allocated on failure)
+
+    type(cvode_solver) :: cv  !! the solver
+    real(wp),dimension(2) :: y  !! solution
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag
+    integer,dimension(1) :: rootsfound  !! root information
+
+    call setup(cv, y, error); if (allocated(error)) return
+    call cv%root_init(1, g_half, flag)
+    call check(error, flag, CV_SUCCESS);           if (allocated(error)) return
+
+    call cv%solve(2.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_ROOT_RETURN);       if (allocated(error)) return
+    call check(error, t, log(2.0_wp), thr=1.0e-6_wp, rel=.true.); if (allocated(error)) return
+    call cv%get_root_info(rootsfound)
+    call check(error, rootsfound(1), -1, 'root should be decreasing'); if (allocated(error)) return
+    call check(error, cv%get_num_g_evals() > 0, 'no root function evaluations'); if (allocated(error)) return
+
+    ! continue to tout: no more roots
+    call cv%solve(2.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_SUCCESS);           if (allocated(error)) return
+    call check(error, t, 2.0_wp)
+
+    end subroutine test_root_location
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  With the direction restricted to increasing zero-crossings, the
+!  (decreasing) root of y1 - 0.5 is not reported.
+
+    subroutine test_root_direction(error)
+
+    type(error_type),allocatable,intent(out) :: error  !! test error (allocated on failure)
+
+    type(cvode_solver) :: cv  !! the solver
+    real(wp),dimension(2) :: y  !! solution
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag
+
+    call setup(cv, y, error); if (allocated(error)) return
+    call cv%set_error_output(.false.)
+    call cv%set_root_direction([1], flag)
+    call check(error, flag, CV_ILL_INPUT, 'direction before root_init'); if (allocated(error)) return
+    call cv%root_init(1, g_half, flag)
+    call cv%set_root_direction([1], flag)
+    call check(error, flag, CV_SUCCESS);           if (allocated(error)) return
+
+    call cv%solve(2.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_SUCCESS, 'decreasing root should be ignored'); if (allocated(error)) return
+    call check(error, t, 2.0_wp)
+
+    end subroutine test_root_direction
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  A root function that is zero at t0 is made inactive: no root is reported
+!  at t0, and the integration reaches tout.
+
+    subroutine test_root_at_t0(error)
+
+    type(error_type),allocatable,intent(out) :: error  !! test error (allocated on failure)
+
+    type(cvode_solver) :: cv  !! the solver
+    real(wp),dimension(2) :: y  !! solution
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag
+
+    call setup(cv, y, error); if (allocated(error)) return
+    call cv%root_init(1, g_at_t0, flag)
+    call cv%set_no_inactive_root_warn(flag)
+    call cv%solve(1.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_SUCCESS, 'no root expected');  if (allocated(error)) return
+    call check(error, t, 1.0_wp)
+
+    end subroutine test_root_at_t0
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Input checks of `set_constraints`: illegal values, and y0 violating the
+!  constraints.
+
+    subroutine test_constraints_input(error)
+
+    type(error_type),allocatable,intent(out) :: error  !! test error (allocated on failure)
+
+    type(cvode_solver) :: cv  !! the solver
+    real(wp),dimension(2) :: y  !! solution
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag
+
+    call setup(cv, y, error); if (allocated(error)) return
+    call cv%set_error_output(.false.)
+
+    ! values outside {0, +-1, +-2}
+    call cv%set_constraints([3.0_wp, 0.0_wp], flag)
+    call check(error, flag, CV_ILL_INPUT, 'constraint 3 accepted'); if (allocated(error)) return
+    call cv%set_constraints([0.0_wp, 0.0_wp], flag)
+    call check(error, flag, CV_ILL_INPUT, 'all-zero constraints accepted'); if (allocated(error)) return
+
+    ! y0 = (1, 2) violates y2 < 0
+    call cv%set_constraints([0.0_wp, -2.0_wp], flag)
+    call check(error, flag, CV_SUCCESS);           if (allocated(error)) return
+    call cv%solve(1.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_ILL_INPUT, 'y0 violating the constraints accepted'); if (allocated(error)) return
+
+    ! satisfied constraints (y >= 0): the solution is unchanged, no failures
+    call setup(cv, y, error); if (allocated(error)) return
+    call cv%set_constraints([1.0_wp, 1.0_wp], flag)
+    call cv%solve(2.0_wp, y, t, CV_NORMAL, flag)
+    call check(error, flag, CV_SUCCESS);           if (allocated(error)) return
+    call check(error, y(1), exp(-2.0_wp), thr=1.0e-6_wp, rel=.true.)
+
+    end subroutine test_constraints_input
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Stability limit detection is only allowed with BDF.
+
+    subroutine test_stald_input(error)
+
+    type(error_type),allocatable,intent(out) :: error  !! test error (allocated on failure)
+
+    type(cvode_solver) :: cv  !! the solver
+    real(wp),dimension(2) :: y  !! solution
+    integer :: flag  !! return flag
+
+    call setup(cv, y, error); if (allocated(error)) return   ! (Adams)
+    call cv%set_error_output(.false.)
+    call cv%set_stab_lim_det(.true., flag)
+    call check(error, flag, CV_ILL_INPUT, 'STALD accepted with Adams')
+
+    end subroutine test_stald_input
 !*****************************************************************************************
 
     end module test_core

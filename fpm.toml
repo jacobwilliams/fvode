@@ -65,3 +65,8 @@ main = "trace_analytic_fp.f90"
 name = "trace_roberts_bdf_dense"
 source-dir = "reference/fortran"
 main = "trace_roberts_bdf_dense.f90"
+
+[[example]]
+name = "trace_osc_bdf_stald"
+source-dir = "reference/fortran"
+main = "trace_osc_bdf_stald.f90"

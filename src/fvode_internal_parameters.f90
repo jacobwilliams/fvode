@@ -155,6 +155,11 @@
     real(wp),parameter :: FRACT = 0.1_wp !! fraction of the Newton correction used as perturbation (CVDiag)
 
     !-------------------------------------------------------------------------------------
+    ! cvode_io.c
+    !-------------------------------------------------------------------------------------
+    real(wp),parameter :: TWOPT5 = 2.5_wp  !! upper bound of max|constraints(i)| (legal values are 0, +-1, +-2)
+
+    !-------------------------------------------------------------------------------------
     ! cvode_proj_impl.h
     !-------------------------------------------------------------------------------------
     integer,parameter  :: PROJ_MAX_FAILS = 10 !! maximum projection failures in one step

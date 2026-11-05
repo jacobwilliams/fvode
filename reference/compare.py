@@ -18,6 +18,11 @@ optimizations (e.g. fused multiply-add), so real values drift by rounding.
 * If all integer columns (steps, orders, counters, flags) match, the real
   columns must agree to a mixed tolerance (--rtol, default 1e-3):
   |a - b| <= rtol * max(|a|, |b|)  or  |a - b| <= rtol * max|column|.
+  For the solution columns (y...), the two runs may be at slightly different
+  times t, so the difference that a time shift alone would cause,
+  |dy/dt| * |t_ref - t_fvode| (with dy/dt estimated from neighboring
+  reference rows), is also allowed. Without it, a fast oscillation turns a
+  tiny phase drift into a large difference in y.
 * On sensitive problems a rounding difference can flip a step decision, after
   which the step sequences differ. The trace is then reported as DIVERGED
   (not a failure) if the final solution values agree to --ytol (default 1e-4,
@@ -66,6 +71,7 @@ def compare(name: str, ref: Path, new: Path, args) -> bool:
 
     real_cols = [k for k, c in enumerate(rhead) if c not in INT_COLS]
     colmax = {k: max((abs(float(r[k])) for r in rrows), default=0.0) for k in real_cols}
+    kt = rhead.index("t")
 
     max_diff = 0.0
     for i, (r, n) in enumerate(zip(rrows, nrows), start=1):
@@ -80,6 +86,10 @@ def compare(name: str, ref: Path, new: Path, args) -> bool:
                 continue
             rel = abs(a - b) / max(abs(a), abs(b))
             scaled = abs(a - b) / max(abs(a), abs(b), colmax[k])
+            if col.startswith("y"):
+                shift = slope(rrows, i - 1, k, kt) * abs(float(r[kt]) - float(n[kt]))
+                if abs(a - b) <= args.rtol * max(abs(a), abs(b), colmax[k]) + 2.0 * shift:
+                    continue
             if math.isnan(rel) or (rel > args.rtol and scaled > args.rtol):
                 print(f"FAIL {name}: row {i} (nst={r[0]}) column '{col}': "
                       f"ref={rv} fvode={nv} (scaled diff {scaled:.3e} > {args.rtol:.1e})"
@@ -97,11 +107,29 @@ def compare(name: str, ref: Path, new: Path, args) -> bool:
     return True
 
 
+def slope(rows, i, k, kt) -> float:
+    """Estimate |dy/dt| of column k at row i from the neighboring rows."""
+    s = 0.0
+    for j in (i - 1, i + 1):
+        if 0 <= j < len(rows):
+            dt = abs(float(rows[j][kt]) - float(rows[i][kt]))
+            if dt > 0.0:
+                s = max(s, abs(float(rows[j][k]) - float(rows[i][k])) / dt)
+    return s
+
+
 def diverged(name, head, rrows, nrows, real_cols, colmax, row, col, args, note="") -> bool:
-    """Step sequences differ (tolerance mode): check the final state instead."""
+    """Step sequences differ (tolerance mode): check the final state instead.
+
+    The final rows may be at different times; the change that the time shift
+    alone would cause (slope times the time difference) is allowed."""
     rlast, nlast = rrows[-1], nrows[-1]
     ycols = [k for k in real_cols if head[k].startswith("y")]
-    worst = max((abs(float(rlast[k]) - float(nlast[k])) / max(colmax[k], 1e-300)
+    kt = head.index("t")
+    dt = abs(float(rlast[kt]) - float(nlast[kt]))
+    worst = max((max(abs(float(rlast[k]) - float(nlast[k]))
+                     - 2.0 * slope(rrows, len(rrows) - 1, k, kt) * dt, 0.0)
+                 / max(colmax[k], 1e-300)
                  for k in ycols), default=0.0)
     nst_r, nst_n = int(rlast[0]), int(nlast[0])
     nst_rel = abs(nst_r - nst_n) / max(nst_r, 1)

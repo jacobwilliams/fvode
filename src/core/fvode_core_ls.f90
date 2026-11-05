@@ -598,6 +598,7 @@
     real(wp) :: inc      !! increment in y_j
     real(wp) :: inc_inv  !! 1/inc
     real(wp) :: yjsaved  !! saved y_j
+    real(wp) :: conj     !! constraint flag of y_j
     real(wp) :: srur     !! sqrt(uround)
     integer(ip) :: j, N  !! column index, number of equations
 
@@ -626,7 +627,15 @@
         yjsaved = ytmp(j)
         inc = max(srur * abs(yjsaved), minInc / me%ewt(j))
 
-        ! [not yet ported] adjust sign(inc) if y_j has an inequality constraint
+        ! adjust sign(inc) if y_j has an inequality constraint
+        if (allocated(me%constraints)) then
+            conj = me%constraints(j)
+            if (abs(conj) == ONE) then
+                if ((yjsaved + inc) * conj < ZERO) inc = -inc
+            else if (abs(conj) == TWO) then
+                if ((yjsaved + inc) * conj <= ZERO) inc = -inc
+            end if
+        end if
 
         ytmp(j) = ytmp(j) + inc
 
@@ -705,7 +714,8 @@
         ! increment all y_j in group (0-based j as in C)
         do j = group - 1, N - 1, width
             inc = max(srur * abs(y(j+1)), minInc / me%ewt(j+1))
-            ! [not yet ported] adjust sign(inc) if y_j has an inequality constraint
+            ! adjust sign(inc) if y_j has an inequality constraint
+            if (allocated(me%constraints)) call adjust_inc(j)
             ytemp(j+1) = ytemp(j+1) + inc
         end do
 
@@ -718,7 +728,8 @@
         do j = group - 1, N - 1, width
             ytemp(j+1) = y(j+1)
             inc = max(srur * abs(y(j+1)), minInc / me%ewt(j+1))
-            ! [not yet ported] adjust sign(inc) if y_j has an inequality constraint
+            ! adjust sign(inc) as before
+            if (allocated(me%constraints)) call adjust_inc(j)
             inc_inv = ONE / inc
             i1 = max(0_ip, j - mupper)
             i2 = min(j + mlower, N - 1)
@@ -730,6 +741,21 @@
     end do
 
     end associate
+
+    contains
+
+        subroutine adjust_inc(j)
+        !! Reverse the increment of column j (0-based) if `ytemp_j + inc` would
+        !! violate the constraint on y_j (C: the `conj` tests in cvLsBandDQJac).
+        integer(ip),intent(in) :: j  !! column index (0-based)
+        real(wp) :: conj  !! constraint flag of y_j
+        conj = me%constraints(j+1)
+        if (abs(conj) == ONE) then
+            if ((me%vtemp2(j+1) + inc) * conj < ZERO) inc = -inc
+        else if (abs(conj) == TWO) then
+            if ((me%vtemp2(j+1) + inc) * conj <= ZERO) inc = -inc
+        end if
+        end subroutine adjust_inc
 
     end function cvLsBandDQJac
 !*****************************************************************************************
