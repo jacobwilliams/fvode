@@ -16,6 +16,7 @@
     module fvode_nonlinsol
 
     use fvode_kinds, only: wp, li
+    use fvode_parameters, only: SUN_ERR_NOT_IMPLEMENTED
     use fvode_linsol, only: ls_problem
 
     implicit none
@@ -29,6 +30,10 @@
         procedure(nls_lsetup_fn),deferred   :: nls_lsetup    !! `SUNNonlinSolLSetupFn`
         procedure(nls_lsolve_fn),deferred   :: nls_lsolve    !! `SUNNonlinSolLSolveFn`
         procedure(nls_convtest_fn),deferred :: nls_convtest  !! `SUNNonlinSolConvTestFn`
+        procedure :: nls_residual => nls_residual_default  !! root-finding form of the system function (hybrid solvers; default: `nls_sys`)
+        procedure :: nls_fp_function => nls_fp_default  !! fixed-point form of the system function (hybrid solvers; default: `nls_sys`)
+        procedure :: nls_get_update_norm => nls_get_update_norm_default  !! `SUNNonlinSolGetUpdateNormFn` (default: not available)
+        procedure :: nls_get_conv_rate => nls_get_conv_rate_default  !! `SUNNonlinSolGetConvRateFn` (default: not available)
     end type nls_problem
 
     type,abstract,public :: sun_nonlinear_solver
@@ -114,7 +119,7 @@
             import :: sun_nonlinear_solver, nls_problem, wp
             implicit none
             class(sun_nonlinear_solver),intent(inout) :: me  !! the nonlinear solver
-            class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
+            class(nls_problem),intent(inout),target :: prob  !! the problem (integrator) providing the system functions
             real(wp),dimension(:),intent(in) :: y0  !! predicted solution
             real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
             real(wp),dimension(:),intent(in) :: w  !! error weights
@@ -168,6 +173,59 @@
     flag = 0
 
     end function nls_setup_default
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Default root-finding system function of a hybrid solver: `nls_sys`.
+
+    function nls_residual_default(me, ycor, res) result(flag)
+    class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+    real(wp),dimension(:),intent(in) :: ycor  !! current correction to the predictor
+    real(wp),dimension(:),intent(inout) :: res  !! residual F(ycor)
+    integer :: flag  !! return flag (0 on success)
+    flag = me%nls_sys(ycor, res)
+    end function nls_residual_default
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Default fixed-point system function of a hybrid solver: `nls_sys`.
+
+    function nls_fp_default(me, ycor, res) result(flag)
+    class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+    real(wp),dimension(:),intent(in) :: ycor  !! current correction to the predictor
+    real(wp),dimension(:),intent(inout) :: res  !! G(ycor)
+    integer :: flag  !! return flag (0 on success)
+    flag = me%nls_sys(ycor, res)
+    end function nls_fp_default
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Default `SUNNonlinSolGetUpdateNormFn` (C: NULL): not available, so the
+!  solver computes the WRMS norm of its update itself.
+
+    function nls_get_update_norm_default(me, delnrm) result(flag)
+    class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+    real(wp),intent(out) :: delnrm  !! norm of the last update (not set)
+    integer :: flag  !! `SUN_ERR_NOT_IMPLEMENTED`
+    delnrm = 0.0_wp
+    flag = SUN_ERR_NOT_IMPLEMENTED
+    end function nls_get_update_norm_default
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Default `SUNNonlinSolGetConvRateFn` (C: NULL): not available.
+
+    function nls_get_conv_rate_default(me, crate) result(flag)
+    class(nls_problem),intent(inout) :: me  !! the problem (integrator)
+    real(wp),intent(out) :: crate  !! estimated convergence rate (not set)
+    integer :: flag  !! `SUN_ERR_NOT_IMPLEMENTED`
+    crate = 0.0_wp
+    flag = SUN_ERR_NOT_IMPLEMENTED
+    end function nls_get_conv_rate_default
 !*****************************************************************************************
 
     end module fvode_nonlinsol

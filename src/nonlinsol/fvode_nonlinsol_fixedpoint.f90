@@ -135,7 +135,7 @@
     function fixedpoint_solve(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
 
     class(sun_nonlinsol_fixedpoint),intent(inout) :: me  !! the fixed-point solver
-    class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
+    class(nls_problem),intent(inout),target :: prob  !! the problem (integrator) providing the system functions
     real(wp),dimension(:),intent(in) :: y0       !! unused (as in C)
     real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
     real(wp),dimension(:),intent(in) :: w  !! error weights

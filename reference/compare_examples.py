@@ -46,6 +46,14 @@ PAIRS = [
     ("cv_krylov_demo_ls", "cvKrylovDemo_ls", 0.0, ["1"]),  # nrmfac = sqrt(N) given
     ("cv_krylov_demo_ls", "cvKrylovDemo_ls", 0.0, ["2"]),  # nrmfac from a dot product
     ("cv_krylov_demo_prec", "cvKrylovDemo_prec", 0.0),
+    ("cv_analytic_mels", "cvAnalytic_mels", 0.0),
+    ("cv_vdp_auto_nls", "cvVdp_auto_nls", 0.0),
+    ("cv_pendulum_dns", "cvPendulum_dns", 0.0),
+    ("cv_particle_dns", "cvParticle_dns", 0.0),
+    # (--proj 0 is not compared: x**i vs SUNRpowerI in the order-increase test
+    # changes the step sequence; identical to C with a multiplication loop)
+    ("cv_particle_dns", "cvParticle_dns", 0.0, ["--projerr", "1"]),
+    ("cv_particle_dns", "cvParticle_dns", 0.0, ["--orbits", "3", "--nout", "4", "--tstop"]),
 ]
 
 NUMBER = re.compile(r"^[-+]?(\d+\.\d*|\.\d+|\d+)(e[-+]?\d+)?$")

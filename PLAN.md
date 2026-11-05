@@ -184,11 +184,13 @@ fvode/
 │   ├── fvode_nvector.f90         ! the few non-trivial vector ops
 │   ├── core/  fvode_core.f90 (module: cvode.c, cvode_io.c, cvode_nls.c) and its
 │   │          submodules fvode_core_ls.f90 fvode_core_diag.f90 fvode_core_root.f90
-│   │          fvode_core_stald.f90 fvode_core_bandpre.f90 (planned: projection)
+│   │          fvode_core_stald.f90 fvode_core_bandpre.f90 fvode_core_proj.f90
+│   │          fvode_core_resize.f90
 │   ├── matrix/   fvode_matrix.f90 (dense and band matrices)
 │   ├── linsol/   fvode_linsol.f90 fvode_linsol_direct.f90 (dense, band)
 │   │             fvode_iterative.f90 fvode_linsol_spgmr.f90 … _spfgmr _spbcgs _sptfqmr _pcg
 │   └── nonlinsol/ fvode_nonlinsol.f90 fvode_nonlinsol_newton.f90 fvode_nonlinsol_fixedpoint.f90
+│                  fvode_nonlinsol_auto.f90
 ├── test/          ! unit tests (test-drive) + regression vs C reference
 ├── example/       ! Fortran ports of examples/cvode/serial/*.c
 ├── reference/     ! C harness + scripts to build/run pinned SUNDIALS
@@ -478,7 +480,50 @@ Original task list:
 * **Exit criterion:** `cvDiurnal_kry`, `cvDiurnal_kry_bp`, `cvKrylovDemo_ls` (all solver variants),
   `cvKrylovDemo_prec` match.
 
-### Phase 6: Remaining features
+### Phase 6: Remaining features ✅ done
+Delivered:
+* Submodule `fvode_core_proj` (`cvode_proj.c`): `set_proj_fn` (BDF only), `set_proj_err_est`,
+  `set_proj_frequency`, `set_max_num_proj_fails`, `set_eps_proj`, `set_proj_fail_eta`,
+  `get_num_proj_evals`/`fails`, `cvDoProjection`. Also the hooks in `cvStep`, `cvSetBDF`
+  (`proj_p`), `cvCompleteStep`, `cvInitialSetup`, `CVodeFree` and `print_all_stats`. The
+  projection callback gets the error estimate as an `optional` argument (C: NULL when error
+  projection is off). C never updates `nstlprj`; FVODE does the same.
+* Submodule `fvode_core_resize` (`cvode_resize.c`): `resize_history` (Adams Newton and BDF
+  Hermite Nordsieck rebuild), plus the `first_step_after_resize` hooks (constraint check and
+  solver re-initialization in `CVode`, `cvAdjustParams`, the lsetup and `jbad`
+  heuristics, `cvCompleteStep`) and `ownNLS` (the default Newton solver is recreated at
+  the new size).
+* Matrix-embedded linear solvers (`SUNLINEARSOLVER_MATRIX_EMBEDDED`) and
+  `get_nonlinear_system_data` (copies of the requested vectors).
+* `sun_nonlinsol_auto` (`sunnonlinsol_auto.c`): automatic fixed-point/Newton switching.
+  The sub-solvers get a proxy `nls_problem` that selects the residual or fixed-point system
+  function and adds the switching test. Newton gained the stiffness-ratio option, and
+  `nls_problem` gained `nls_residual`, `nls_fp_function`, `nls_get_update_norm` and
+  `nls_get_conv_rate` (with defaults). CVODE accepts `SUNNONLINEARSOLVER_HYBRID`.
+* `set_lin_sys_fn` (user `A = I - gamma*J`), `set_nls_rhs_fn`, `get_jac` (copy),
+  `get_lin_solve_stats`. `cvode_solver%NLS` is public, like `%LS`.
+* The eta/tuning setters, `set_max_hnil_warns` and `set_nonlin_conv_coef` were already
+  ported in Phase 2.
+* Examples: `cv_pendulum_dns`, `cv_particle_dns` (with its command-line options),
+  `cv_analytic_mels`, `cv_vdp_auto_nls`. Traces: `resize_{adams_fp,bdf_newton}_{same,grow}`
+  (after the SUNDIALS unit test `cv_test_resize_history.cpp`). Unit tests (`test_options`):
+  a user linear system function and an alternative nonlinear system right-hand side give
+  results identical to the internal path, plus the statistics/Jacobian getters and
+  projection input checks.
+
+Verification:
+* `compare-examples`: all new ports print output identical to C. This includes
+  `cvParticle_dns` with `--projerr 1` and `--orbits 3 --nout 4 --tstop`, and the
+  `cvPendulum_dns` trajectory files, which are byte-identical. `cvParticle_dns --proj 0` is not
+  compared: there, `x**i` vs `SUNRpowerI` in the order-increase test changes the step
+  sequence; with a multiplication loop the output is identical.
+* `compare-exact`: the four resize traces are bitwise identical to C (60 steps each, the
+  growing cases ending at size 61).
+
+Unported: `CVodeSetOptions` (command-line/file options), `CVodeSetMonitorFn` (needs a
+monitoring build), `CVodeGetWorkSpace`/`GetLinWorkSpace` (FVODE does not track workspace).
+
+Original task list:
 * `cvode_proj.c` (projection: `CVodeSetProjFn`, error projection, `cvDoProjection`), verified with `cvPendulum_dns`.
 * `CVodeSetEtaFixedStepBounds`, `SetEtaMaxFirstStep/EarlyStep/General`, `SetEtaMin*`,
   `SetDeltaGammaMaxLSetup`, `SetNonlinConvCoef`, and other newer tuning knobs from `cvode_io.c`.

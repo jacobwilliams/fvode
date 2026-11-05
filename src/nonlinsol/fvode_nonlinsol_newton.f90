@@ -2,17 +2,19 @@
 !>
 !  Newton nonlinear solver (SUNDIALS v7.9.0 `SUNNonlinSol_Newton`).
 !
-!  Translated from `src/sunnonlinsol/newton/sunnonlinsol_newton.c`. The
-!  optional stiffness-ratio computation (used only by the "auto" switching
-!  solver) is not included.
+!  Translated from `src/sunnonlinsol/newton/sunnonlinsol_newton.c`,
+!  including the optional stiffness-ratio computation used by the "auto"
+!  switching solver ([[sun_nonlinsol_auto]]).
 
     module fvode_nonlinsol_newton
 
     use fvode_kinds, only: wp, li
     use fvode_parameters, only: SUNNONLINEARSOLVER_ROOTFIND, SUN_SUCCESS, &
                                 SUN_NLS_SWITCH, SUN_NLS_CONTINUE, SUN_NLS_CONV_RECVR, &
-                                SUN_ERR_ARG_OUTOFRANGE, SUN_ERR_ARG_CORRUPT
+                                SUN_ERR_ARG_OUTOFRANGE, SUN_ERR_ARG_CORRUPT, &
+                                SUN_ERR_NOT_IMPLEMENTED
     use fvode_nonlinsol, only: sun_nonlinear_solver, nls_problem
+    use fvode_nvector, only: n_vwrmsnorm
 
     implicit none
 
@@ -27,6 +29,9 @@
         integer(li) :: niters = 0      !! total iterations in the last solve
         integer(li) :: nconvfails = 0  !! convergence failures in the last solve
         real(wp),dimension(:),allocatable :: delta  !! Newton update vector
+        logical :: compute_stiffr = .false.  !! compute the stiffness ratio?
+        real(wp) :: stiffr = 0.0_wp  !! the last stiffness ratio ||F(y_{m+1})|| / ||delta_m||
+        real(wp) :: delnrm = 0.0_wp  !! norm of the last Newton update
     contains
         procedure :: get_type           => newton_get_type  !! `SUNNonlinSolGetType`
         procedure :: initialize         => newton_initialize  !! `SUNNonlinSolInitialize`
@@ -35,6 +40,8 @@
         procedure :: get_num_iters      => newton_get_num_iters  !! `SUNNonlinSolGetNumIters`
         procedure :: get_cur_iter       => newton_get_cur_iter  !! `SUNNonlinSolGetCurIter`
         procedure :: get_num_conv_fails => newton_get_num_conv_fails  !! `SUNNonlinSolGetNumConvFails`
+        procedure :: set_compute_stiffness_ratio => newton_set_compute_stiffr  !! `SUNNonlinSolSetComputeStiffnessRatio_Newton`
+        procedure :: get_stiffness_ratio => newton_get_stiffr  !! `SUNNonlinSolGetStiffnessRatio_Newton`
     end type sun_nonlinsol_newton
 
     interface sun_nonlinsol_newton
@@ -75,6 +82,7 @@
 
     me%niters     = 0
     me%nconvfails = 0
+    me%stiffr     = 0.0_wp
     me%jcur       = .false.
     flag = SUN_SUCCESS
 
@@ -92,7 +100,7 @@
     function newton_solve(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
 
     class(sun_nonlinsol_newton),intent(inout) :: me  !! the Newton solver
-    class(nls_problem),intent(inout) :: prob  !! the problem (integrator) providing the system functions
+    class(nls_problem),intent(inout),target :: prob  !! the problem (integrator) providing the system functions
     real(wp),dimension(:),intent(in) :: y0      !! unused (as in C)
     real(wp),dimension(:),intent(inout) :: ycor  !! correction: initial guess on input, solution on output
     real(wp),dimension(:),intent(in) :: w  !! error weights
@@ -101,8 +109,11 @@
     integer :: flag  !! return flag (0 on success)
 
     integer :: retval  !! return flag of the called function
+    integer :: ierr  !! return flag of the update norm
     logical :: jbad  !! the Jacobian is suspected to be out of date
     logical :: callLSetup  !! set up the linear solver in this pass
+    real(wp) :: delnrm  !! norm of the last update (stiffness ratio)
+    real(wp) :: resnrm  !! norm of the new residual (stiffness ratio)
 
     if (call_lsetup .and. .not. me%has_lsetup) then
         flag = SUN_ERR_ARG_CORRUPT
@@ -157,6 +168,15 @@
             ! update here to keep curiter correct for the convergence test
             me%curiter = me%curiter + 1
 
+            ! retrieve the update norm if it is available, otherwise compute it
+            ierr = prob%nls_get_update_norm(me%delnrm)
+            if (ierr == SUN_ERR_NOT_IMPLEMENTED) then
+                me%delnrm = n_vwrmsnorm(me%delta, w)
+            else if (ierr /= SUN_SUCCESS) then
+                flag = ierr
+                return
+            end if
+
             ! if successful update Jacobian status and return
             if (retval == SUN_SUCCESS) then
                 me%jcur = .false.
@@ -179,6 +199,18 @@
             ! compute the nonlinear residual, store in delta
             retval = prob%nls_sys(ycor, me%delta)
             if (retval /= SUN_SUCCESS) exit newton_loop
+
+            if (me%compute_stiffr) then
+                delnrm = me%delnrm
+                resnrm = n_vwrmsnorm(me%delta, w)   ! C: norm_fn (cvNlsNorm) or N_VWrmsNorm
+                ! Norsett's switching metric compares the next residual to
+                ! the previous Newton update norm
+                if (delnrm > 0.0_wp) then
+                    me%stiffr = resnrm / delnrm
+                else
+                    me%stiffr = 0.0_wp
+                end if
+            end if
 
         end do newton_loop
 
@@ -240,6 +272,24 @@
     integer(li) :: val  !! convergence failures in the last solve
     val = me%nconvfails
     end function newton_get_num_conv_fails
+
+    function newton_set_compute_stiffr(me, onoff) result(flag)
+    !! `SUNNonlinSolSetComputeStiffnessRatio_Newton`: compute the stiffness
+    !! ratio `||F(y_{m+1})|| / ||delta_m||` in each iteration?
+    class(sun_nonlinsol_newton),intent(inout) :: me  !! the Newton solver
+    logical,intent(in) :: onoff  !! compute the ratio?
+    integer :: flag  !! `SUN_SUCCESS`
+    me%compute_stiffr = onoff
+    if (.not. onoff) me%stiffr = 0.0_wp
+    flag = SUN_SUCCESS
+    end function newton_set_compute_stiffr
+
+    pure function newton_get_stiffr(me) result(val)
+    !! `SUNNonlinSolGetStiffnessRatio_Newton`: the last stiffness ratio
+    class(sun_nonlinsol_newton),intent(in) :: me  !! the Newton solver
+    real(wp) :: val  !! the stiffness ratio
+    val = me%stiffr
+    end function newton_get_stiffr
 
     end module fvode_nonlinsol_newton
 !*****************************************************************************************

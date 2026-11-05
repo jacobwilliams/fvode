@@ -11,6 +11,7 @@
     use test_core, only: collect_core
     use test_linsol, only: collect_linsol
     use test_krylov, only: collect_krylov
+    use test_options, only: collect_options
 
     implicit none
 
@@ -24,7 +25,8 @@
                    new_testsuite("nvector",    collect_nvector),   &
                    new_testsuite("core",       collect_core),      &
                    new_testsuite("linsol",     collect_linsol),    &
-                   new_testsuite("krylov",     collect_krylov)     ]
+                   new_testsuite("krylov",     collect_krylov),    &
+                   new_testsuite("options",    collect_options)    ]
 
     do is = 1, size(testsuites)
         write(error_unit, fmt) "Testing:", testsuites(is)%name

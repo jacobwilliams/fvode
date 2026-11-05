@@ -21,12 +21,10 @@
 !  The linear solver interface (`cvode_ls.c`) is in the submodule
 !  `fvode_core_ls`.
 !
-!### Not yet ported
-!
-!  Projection and history resizing. Root finding is in the submodule `fvode_core_root`, stability
-!  limit detection in `fvode_core_stald`, the band preconditioner in
-!  `fvode_core_bandpre`.
-!  The places where the C code handles them are marked `! [not yet ported]`.
+!  Root finding is in the submodule `fvode_core_root`, stability limit
+!  detection in `fvode_core_stald`, the band preconditioner in
+!  `fvode_core_bandpre`, projection in `fvode_core_proj` and history
+!  resizing in `fvode_core_resize`.
 
     module fvode_core
 
@@ -65,6 +63,7 @@
 
         !---- problem specification
         procedure(cv_rhs_fn),pointer,nopass :: f => null()  !! y' = f(t,y)
+        procedure(cv_rhs_fn),pointer,nopass :: nls_f => null()  !! the f used in the nonlinear system functions (`CVodeSetNlsRhsFn`)
         integer :: lmm = CV_BDF        !! CV_ADAMS or CV_BDF
         integer :: itol = CV_NN        !! CV_SS, CV_SV, CV_WF, CV_NN
         real(wp) :: reltol = ZERO      !! relative tolerance
@@ -158,7 +157,8 @@
         real(wp) :: etaqp1 = ZERO  !! ratio of new to old h for order q+1
 
         !---- nonlinear solver
-        class(sun_nonlinear_solver),allocatable :: NLS  !! nonlinear solver
+        logical :: ownNLS = .false.  !! is NLS the default Newton solver created by CVODE?
+        class(sun_nonlinear_solver),allocatable,public :: NLS  !! the attached nonlinear solver (a copy; public so that solver-specific settings and statistics are accessible)
         integer :: convfail = CV_NO_FAILURES            !! for the linear solver setup
 
         !---- linear solver (C: cv_linit, cv_lsetup, ... and cv_lmem)
@@ -173,6 +173,8 @@
         logical :: ls_matrixbased = .false.  !! is a matrix structure used?
         logical :: jacDQ = .false.           !! use the internal DQ Jacobian
         procedure(cv_jac_fn),pointer,nopass :: jac_user => null()  !! user Jacobian
+        logical :: user_linsys = .false.  !! is a user linear system function in use?
+        procedure(cv_linsys_fn),pointer,nopass :: linsys_user => null()  !! user linear system function (`CVodeSetLinSysFn`)
         logical :: jbad = .true.             !! heuristic suggestion for pset
         real(wp) :: dgmax_jbad = CVLS_DGMAX  !! |gamma/gammap-1| < dgmax_jbad: J is bad
         logical :: scalesol = .false.        !! scale the solution for a change in gamma
@@ -241,6 +243,26 @@
         integer(li) :: nor = 0       !! number of order reductions
         real(wp),dimension(0:5,0:3) :: ssdat = ZERO  !! scaled data array for STALD (C: ssdat[6][4], used as [1..5][1..3])
 
+        !---- history resizing (cvode_resize.c; submodule fvode_core_resize)
+        logical :: first_step_after_resize = .false.  !! is the next step the first after CVodeResizeHistory?
+
+        !---- projection (CVodeProjMemRec, cvode_proj_impl.h; submodule fvode_core_proj)
+        logical :: proj_mem = .false.      !! has the projection memory been created? (C: `proj_mem != NULL`)
+        logical :: proj_enabled = .false.  !! is projection enabled?
+        logical :: proj_applied = .false.  !! was projection applied in this step?
+        real(wp),dimension(0:L_MAX-1) :: proj_p = ZERO  !! coefficients of p(x) (degree q polynomial)
+        logical :: internal_proj = .true.  !! use the internal projection algorithm? (not implemented in C either)
+        logical :: err_proj = .true.       !! is error projection enabled?
+        logical :: first_proj = .true.     !! is this the first projection?
+        integer(li) :: proj_freq = 1       !! projection frequency (0: off)
+        integer(li) :: nstlprj = 0         !! step number of the last projection
+        integer :: proj_max_fails = PROJ_MAX_FAILS  !! maximum projection failures in one step attempt
+        procedure(cv_proj_fn),pointer,nopass :: pfun => null()  !! the user projection function
+        real(wp) :: eps_proj = PROJ_EPS    !! projection solve tolerance
+        real(wp) :: eta_pfail = PROJ_FAIL_ETA  !! step size reduction factor after a projection failure
+        integer(li) :: nproj = 0           !! number of projections performed
+        integer(li) :: npfails = 0         !! number of projection failures
+
         !---- root finding
         procedure(cv_root_fn),pointer,nopass :: gfun => null()  !! function g for the roots sought
         integer :: nrtfn = 0                         !! number of components of g
@@ -277,6 +299,7 @@
         procedure,public :: ss_tolerances       => CVodeSStolerances  !! `CVodeSStolerances`: scalar relative and absolute tolerances
         procedure,public :: sv_tolerances       => CVodeSVtolerances  !! `CVodeSVtolerances`: scalar relative and vector absolute tolerances
         procedure,public :: wf_tolerances       => CVodeWFtolerances  !! `CVodeWFtolerances`: user error weight function
+        procedure,public :: set_nls_rhs_fn      => CVodeSetNlsRhsFn  !! `CVodeSetNlsRhsFn`: f for the nonlinear system functions
         procedure,public :: set_nonlinear_solver => CVodeSetNonlinearSolver  !! `CVodeSetNonlinearSolver`: attach a nonlinear solver
         procedure,public :: solve               => CVode  !! `CVode`: integrate to tout, or take one step
         procedure,public :: get_dky             => CVodeGetDky  !! `CVodeGetDky`: interpolate the solution (or a derivative)
@@ -332,12 +355,16 @@
         procedure,public :: get_err_weights     => CVodeGetErrWeights  !! `CVodeGetErrWeights`: error weights
         procedure,public :: get_est_local_errors => CVodeGetEstLocalErrors  !! `CVodeGetEstLocalErrors`: estimated local errors
         procedure,public :: get_integrator_stats => CVodeGetIntegratorStats  !! `CVodeGetIntegratorStats`: main integrator statistics
+        procedure,public :: get_nonlinear_system_data => CVodeGetNonlinearSystemData  !! `CVodeGetNonlinearSystemData`: data of the current nonlinear system
         procedure,public :: get_nonlin_solv_stats => CVodeGetNonlinSolvStats  !! `CVodeGetNonlinSolvStats`: nonlinear solver statistics
         procedure,public :: print_all_stats     => CVodePrintAllStats  !! `CVodePrintAllStats`: print all statistics
 
         ! linear solver interface (cvode_ls.c, submodule fvode_core_ls)
         procedure,public :: set_linear_solver   => CVodeSetLinearSolver  !! `CVodeSetLinearSolver`: attach a linear solver and matrix
         procedure,public :: set_jac_fn          => CVodeSetJacFn  !! `CVodeSetJacFn`: user Jacobian function
+        procedure,public :: set_lin_sys_fn      => CVodeSetLinSysFn  !! `CVodeSetLinSysFn`: user linear system function A = I - gamma*J
+        procedure,public :: get_jac             => CVodeGetJac  !! `CVodeGetJac`: the saved Jacobian
+        procedure,public :: get_lin_solve_stats => CVodeGetLinSolveStats  !! `CVodeGetLinSolveStats`: linear solver statistics
         procedure,public :: set_jac_eval_frequency => CVodeSetJacEvalFrequency  !! `CVodeSetJacEvalFrequency`: maximum steps between Jacobian evaluations
         procedure,public :: set_linear_solution_scaling => CVodeSetLinearSolutionScaling  !! `CVodeSetLinearSolutionScaling`: BDF solution scaling on/off
         procedure,public :: set_delta_gamma_max_bad_jac => CVodeSetDeltaGammaMaxBadJac  !! `CVodeSetDeltaGammaMaxBadJac`: gamma ratio threshold for a bad Jacobian
@@ -376,6 +403,19 @@
         procedure,public :: get_num_constraint_corrections => CVodeGetNumConstraintCorrections  !! `CVodeGetNumConstraintCorrections`
         procedure,public :: set_stab_lim_det    => CVodeSetStabLimDet  !! `CVodeSetStabLimDet`: turn stability limit detection on/off (BDF)
 
+        ! history resizing (cvode_resize.c, submodule fvode_core_resize)
+        procedure,public :: resize_history      => CVodeResizeHistory  !! `CVodeResizeHistory`: change the problem size
+
+        ! projection (cvode_proj.c, submodule fvode_core_proj)
+        procedure,public :: set_proj_fn         => CVodeSetProjFn  !! `CVodeSetProjFn`: user projection function (BDF)
+        procedure,public :: set_proj_err_est    => CVodeSetProjErrEst  !! `CVodeSetProjErrEst`: project the error estimate too?
+        procedure,public :: set_proj_frequency  => CVodeSetProjFrequency  !! `CVodeSetProjFrequency`: project every freq steps (0: off)
+        procedure,public :: set_max_num_proj_fails => CVodeSetMaxNumProjFails  !! `CVodeSetMaxNumProjFails`
+        procedure,public :: set_eps_proj        => CVodeSetEpsProj  !! `CVodeSetEpsProj`: projection solve tolerance
+        procedure,public :: set_proj_fail_eta   => CVodeSetProjFailEta  !! `CVodeSetProjFailEta`: step reduction after a projection failure
+        procedure,public :: get_num_proj_evals  => CVodeGetNumProjEvals  !! `CVodeGetNumProjEvals`: number of projections
+        procedure,public :: get_num_proj_fails  => CVodeGetNumProjFails  !! `CVodeGetNumProjFails`: number of projection failures
+
         ! diagonal linear solver (cvode_diag.c, submodule fvode_core_diag)
         procedure,public :: diag                => CVDiag  !! `CVDiag`: attach the diagonal linear solver
         procedure,public :: get_diag_num_rhs_evals => CVDiagGetNumRhsEvals  !! `CVDiagGetNumRhsEvals`: f evaluations for the diagonal Jacobian
@@ -386,6 +426,10 @@
         procedure :: nls_lsetup   => cvNlsLSetup  !! `cvNlsLSetup`: linear solver setup for Newton
         procedure :: nls_lsolve   => cvNlsLSolve  !! `cvNlsLSolve`: linear solve for Newton
         procedure :: nls_convtest => cvNlsConvTest  !! `cvNlsConvTest`: CVODE's nonlinear convergence test
+        procedure :: nls_residual => cvNlsResidual  !! `cvNlsResidual`: root-finding system function (hybrid solvers)
+        procedure :: nls_fp_function => cvNlsFPFunction  !! `cvNlsFPFunction`: fixed-point system function (hybrid solvers)
+        procedure :: nls_get_update_norm => cvNlsGetUpdateNorm  !! `cvNlsGetUpdateNorm`: the norm of the last update
+        procedure :: nls_get_conv_rate => cvNlsGetConvRate  !! `cvNlsGetConvRate`: the convergence rate estimate
 
     end type cvode_solver
 
@@ -430,6 +474,25 @@
             real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors of length n
             integer :: retval  !! 0 on success, > 0 for a recoverable error, < 0 for an unrecoverable error
         end function cv_jac_fn
+
+        function cv_linsys_fn(me, t, y, fy, A, jok, jcur, gamma, tmp1, tmp2, tmp3) result(retval)
+            !! User linear system function (`CVLsLinSysFn`): compute
+            !! `A = I - gamma*J(t,y)`. If `jok`, saved Jacobian data may be
+            !! reused; set `jcur = .true.` if the Jacobian was re-evaluated.
+            !! Return 0 on success, > 0 recoverable, < 0 unrecoverable.
+            import :: cvode_solver, sun_matrix, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(in) :: y  !! current solution
+            real(wp),dimension(:),intent(in) :: fy  !! f(t, y)
+            class(sun_matrix),intent(inout) :: A  !! the linear system matrix to fill
+            logical,intent(in) :: jok  !! may saved Jacobian data be reused?
+            logical,intent(out) :: jcur  !! was the Jacobian re-evaluated?
+            real(wp),intent(in) :: gamma  !! the scalar gamma
+            real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3  !! work vectors of length n
+            integer :: retval  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cv_linsys_fn
 
         function cv_psetup_fn(me, t, y, fy, jok, jcur, gamma) result(retval)
             !! Preconditioner setup function (`CVLsPrecSetupFn`): prepare the
@@ -494,6 +557,23 @@
             integer :: retval  !! 0 on success, nonzero on failure
         end function cv_jtimes_fn
 
+        function cv_proj_fn(me, t, ycur, corr, epsProj, err) result(retval)
+            !! Projection function (`CVProjFn`): project `ycur` onto the
+            !! constraint manifold, to the tolerance `epsProj` in the WRMS norm,
+            !! and return the correction in `corr` (projected minus input
+            !! `ycur`). If present, `err` (the error estimate) is projected
+            !! too. Return 0 on success, > 0 recoverable, < 0 unrecoverable.
+            import :: cvode_solver, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver (extend it to carry data)
+            real(wp),intent(in) :: t  !! current time
+            real(wp),dimension(:),intent(inout) :: ycur  !! the current solution, projected on output
+            real(wp),dimension(:),intent(out) :: corr  !! the projection correction
+            real(wp),intent(in) :: epsProj  !! the projection solve tolerance
+            real(wp),dimension(:),intent(inout),optional :: err  !! the error estimate, projected on output (absent: no error projection)
+            integer :: retval  !! 0 on success, > 0 recoverable, < 0 unrecoverable
+        end function cv_proj_fn
+
         function cv_root_fn(me, t, y, gout) result(retval)
             !! Root function (`CVRootFn`): compute `gout(i) = g_i(t, y)`,
             !! i = 1..nrtfn. CVODE finds the roots of these functions.
@@ -524,6 +604,13 @@
             class(sun_matrix),intent(in),optional :: A  !! the matrix (copied; required for direct solvers)
             integer,intent(out) :: flag  !! return flag: `CVLS_SUCCESS` or a negative error code
         end subroutine CVodeSetLinearSolver
+
+        module subroutine CVodeSetLinSysFn(me, linsys, flag)
+            !! See the implementation in the submodule (`fvode_core_ls`).
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_linsys_fn),optional :: linsys  !! user linear system function (absent: the internal one)
+            integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+        end subroutine CVodeSetLinSysFn
 
         module subroutine CVodeSetJacFn(me, jac, flag)
             !! See the implementation in the submodule (`fvode_core_ls`).
@@ -732,6 +819,81 @@
             integer :: flag  !! `CV_SUCCESS`, `RTFOUND` or `CV_RTFUNC_FAIL`
         end function cvRcheck3
 
+        ! history resizing: submodule fvode_core_resize (cvode_resize.c)
+
+        module subroutine CVodeResizeHistory(me, t_hist, y_hist, f_hist, flag)
+            !! Implemented in submodule `fvode_core_resize`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),dimension(:),intent(in) :: t_hist  !! times of the history, t_hist(1) = current time, decreasing (for forward integration)
+            real(wp),dimension(:,:),intent(in) :: y_hist  !! solution history (new size, at least 2 / q+1 columns)
+            real(wp),dimension(:,:),intent(in) :: f_hist  !! right-hand side history (new size, at least q+1 / 2 columns)
+            integer,intent(out) :: flag  !! `CV_SUCCESS`, `CV_ILL_INPUT` or `CV_MEM_FAIL`
+        end subroutine CVodeResizeHistory
+
+        ! projection: submodule fvode_core_proj (cvode_proj.c)
+
+        module subroutine CVodeSetProjFn(me, pfun, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            procedure(cv_proj_fn) :: pfun  !! the projection function
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_ILL_INPUT`
+        end subroutine CVodeSetProjFn
+
+        module subroutine CVodeSetProjErrEst(me, onoff, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            logical,intent(in) :: onoff  !! project the error estimate?
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end subroutine CVodeSetProjErrEst
+
+        module subroutine CVodeSetProjFrequency(me, freq, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer(li),intent(in) :: freq  !! projection frequency (< 0: default 1; 0: off)
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end subroutine CVodeSetProjFrequency
+
+        module subroutine CVodeSetMaxNumProjFails(me, max_fails, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(in) :: max_fails  !! maximum failures in one step attempt (< 1: default 10)
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end subroutine CVodeSetMaxNumProjFails
+
+        module subroutine CVodeSetEpsProj(me, eps, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: eps  !! projection tolerance (<= 0: default 0.1)
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end subroutine CVodeSetEpsProj
+
+        module subroutine CVodeSetProjFailEta(me, eta, flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            real(wp),intent(in) :: eta  !! step reduction factor (outside (0,1]: default 0.25)
+            integer,intent(out) :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end subroutine CVodeSetProjFailEta
+
+        module function cvDoProjection(me, nflag, saved_t, npfail) result(flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer,intent(inout) :: nflag  !! set to `PREV_PROJ_FAIL` on a recoverable failure
+            real(wp),intent(in) :: saved_t  !! time to restore to on failure
+            integer,intent(inout) :: npfail  !! projection failures in this step attempt
+            integer :: flag  !! `CV_SUCCESS`, `PREDICT_AGAIN` or a failure flag
+        end function cvDoProjection
+
+        module function cvProjInit(me) result(flag)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+            integer :: flag  !! `CV_SUCCESS` or `CV_PROJ_MEM_NULL`
+        end function cvProjInit
+
+        module subroutine cvProjFree(me)
+            !! Implemented in submodule `fvode_core_proj`.
+            class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+        end subroutine cvProjFree
+
         ! stability limit detection: submodule fvode_core_stald (cvode.c)
 
         module subroutine cvBDFStab(me)
@@ -857,7 +1019,13 @@
     me%nrtfn   = 0
     me%mxgnull = 1
 
-    ! [not yet ported] projection, resize
+    ! initialize projection variables
+    me%proj_mem     = .false.
+    me%proj_enabled = .false.
+    me%proj_applied = .false.
+
+    ! initialize resize variables
+    me%first_step_after_resize = .false.
 
     ! set the saved value qmax_alloc
     me%qmax_alloc = maxord
@@ -911,6 +1079,7 @@
 
     ! create a Newton nonlinear solver object and attach it to CVode
     call CVodeSetNonlinearSolverInternal(me, sun_nonlinsol_newton(int(me%n)), flag)
+    me%ownNLS = (flag == CV_SUCCESS)
     if (flag /= CV_SUCCESS) then
         call cvProcessError(me, flag, 'CVodeInit', 'Setting the nonlinear solver failed')
         call cvFreeVectors(me)
@@ -1320,6 +1489,39 @@
             end if
         end if
 
+    else if (me%first_step_after_resize) then
+
+        ! check if the resized y satisfies the constraints
+        if (allocated(me%constraints)) then
+            if (.not. n_vconstrmask(me%constraints, me%zn(:,0), me%tempv)) then
+                call cvProcessError(me, CV_ILL_INPUT, 'CVode', 'y does not satisfy the constraints')
+                flag = CV_ILL_INPUT
+                return
+            end if
+        end if
+
+        ! initialize the linear solver
+        if (me%ls_kind /= LS_NONE) then
+            select case (me%ls_kind)
+            case (LS_GENERIC); ier = cvLsInitialize(me)
+            case (LS_DIAG);    ier = CVDiagInit(me)
+            end select
+            if (ier /= 0) then
+                call cvProcessError(me, CV_LINIT_FAIL, 'CVode', "The linear solver's init routine failed.")
+                flag = CV_LINIT_FAIL
+                return
+            end if
+        end if
+
+        ! initialize the nonlinear solver (must occur after linear solver is
+        ! initialized) so the lsetup and lsolve pointers have been set
+        ier = cvNlsInit(me)
+        if (ier /= 0) then
+            call cvProcessError(me, CV_NLS_INIT_FAIL, 'CVode', "The nonlinear solver's init routine failed.")
+            flag = CV_NLS_INIT_FAIL
+            return
+        end if
+
     end if ! end of first call block
 
     !------------------------------------------------------------------
@@ -1727,6 +1929,7 @@
     call cvFreeRoots(me)
     me%nrtfn = 0
     me%gfun => null()
+    call cvProjFree(me)
     me%MallocDone = .false.
     me%f => null()
     me%efun_user => null()
@@ -1906,7 +2109,22 @@
         return
     end if
 
-    ! [not yet ported] projection initialization
+    ! initialize projection data
+    if (me%proj_enabled .and. .not. me%proj_mem) then
+        call cvProcessError(me, CV_PROJ_MEM_NULL, 'cvInitialSetup', 'proj_mem = NULL illegal.')
+        flag = CV_PROJ_MEM_NULL
+        return
+    end if
+
+    if (me%proj_mem) then
+        ier = cvProjInit(me)
+        if (ier /= CV_SUCCESS) then
+            call cvProcessError(me, CV_MEM_FAIL, 'cvInitialSetup', 'A memory request failed.')
+            flag = CV_MEM_FAIL
+            return
+        end if
+        me%proj_applied = .false.
+    end if
 
     flag = CV_SUCCESS
 
@@ -2125,6 +2343,9 @@
     real(wp) :: dsm  !! local truncation error estimate
     integer :: nflag, kflag  !! nonlinear solver flags
     integer :: eflag  !! error test return flag
+    integer :: pflag  !! projection return flag
+    logical :: doProjection  !! apply projection in this step?
+    integer :: npf  !! projection failures in this step attempt
 
     ! are we computing sensitivities with the simultaneous approach?
     integer :: ncf  !! corrector failures in this step attempt
@@ -2133,13 +2354,19 @@
     integer :: cflag  !! return flag of cvCheckConstraints
 
     ncf = 0
+    npf = 0
     nef = 0
     step_constraint_fails = 0
 
     ! if the step size has changed, update the history array
     if ((me%nst > 0) .and. (me%hprime /= me%h)) call cvAdjustParams(me)
 
-    ! [not yet ported] check if projection is needed
+    ! check if this step should be projected
+    doProjection = .false.
+    if (me%proj_enabled) then
+        doProjection = me%proj_freq > 0 .and. &
+                       (me%nst == 0 .or. (me%nst >= me%nstlprj + me%proj_freq))
+    end if
 
     ! looping point for attempts to take a step
     saved_t = me%tn
@@ -2174,7 +2401,20 @@
             end if
         end if
 
-        ! [not yet ported] perform projection
+        ! check if a projection needs to be performed
+        me%proj_applied = .false.
+
+        if (doProjection) then
+            ! perform projection (nflag=CV_SUCCESS)
+            pflag = cvDoProjection(me, nflag, saved_t, npf)
+            ! go back in loop if we need to predict again (nflag=PREV_PROJ_FAIL)
+            if (pflag == PREDICT_AGAIN) cycle
+            ! return if projection failed and recovery is not possible
+            if (pflag /= CV_SUCCESS) then
+                flag = pflag
+                return
+            end if
+        end if
 
         ! perform error test (nflag=CV_SUCCESS)
         eflag = cvDoErrorTest(me, nflag, saved_t, nef, dsm)
@@ -2227,8 +2467,8 @@
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
     if (me%qprime /= me%q) then
-        ! [not yet ported] history resize: skip order adjustment after a resize
-        call cvAdjustOrder(me, me%qprime - me%q)
+        ! history adjustments for an order change were applied when resizing
+        if (.not. me%first_step_after_resize) call cvAdjustOrder(me, me%qprime - me%q)
         me%q     = me%qprime
         me%LL    = me%q + 1
         me%qwait = me%LL
@@ -2660,7 +2900,7 @@
     alpha0_hat = -ONE
     hsum       = me%h
 
-    ! [not yet ported] projection coefficients proj_p
+    if (me%proj_enabled) me%proj_p(0:me%q) = me%l(0:me%q)
 
     if (me%q > 1) then
         do j = 2, me%q - 1
@@ -2679,6 +2919,12 @@
         hsum       = hsum + me%tau(me%q - 1)
         xi_inv     = me%h / hsum
         alpha0_hat = -me%l(1) - xi_inv
+
+        if (me%proj_enabled) then
+            do i = me%q, 1, -1
+                me%proj_p(i) = me%l(i) + me%proj_p(i - 1) * xi_inv
+            end do
+        end if
 
         do i = me%q, 1, -1
             me%l(i) = me%l(i) + me%l(i - 1) * xistar_inv
@@ -2764,7 +3010,7 @@
         end if
 
         callSetup = (nflag == PREV_CONV_FAIL) .or. (nflag == PREV_ERR_FAIL) .or. &
-                    (me%nst == 0) .or. &
+                    (me%nst == 0) .or. me%first_step_after_resize .or. &
                     (me%nst >= me%nstlp + me%msbp) .or. &
                     (abs(me%gamrat - ONE) > me%dgmax_lsetup)
     else
@@ -3112,6 +3358,8 @@
     me%hu    = me%h
     me%qu    = me%q
 
+    me%first_step_after_resize = .false.
+
     do i = me%q, 2, -1
         me%tau(i) = me%tau(i - 1)
     end do
@@ -3123,7 +3371,13 @@
         me%zn(:,j) = me%zn(:,j) + me%l(j) * me%acor
     end do
 
-    ! [not yet ported] apply the projection correction
+    ! apply the projection correction to column j of zn: p_j * Delta_n
+    ! (tempv = acorP)
+    if (me%proj_applied) then
+        do j = 0, me%q
+            me%zn(:,j) = me%zn(:,j) + me%proj_p(j) * me%tempv
+        end do
+    end if
 
     me%qwait = me%qwait - 1
     if ((me%qwait == 1) .and. (me%q /= me%qmax)) then
@@ -3518,6 +3772,7 @@
     end if
 
     call CVodeSetNonlinearSolverInternal(me, NLS, flag)
+    me%ownNLS = .false.
 
     end subroutine CVodeSetNonlinearSolver
 !*****************************************************************************************
@@ -3537,7 +3792,8 @@
 
     itype = NLS%get_type()
     if (itype /= SUNNONLINEARSOLVER_ROOTFIND .and. &
-        itype /= SUNNONLINEARSOLVER_FIXEDPOINT) then
+        itype /= SUNNONLINEARSOLVER_FIXEDPOINT .and. &
+        itype /= SUNNONLINEARSOLVER_HYBRID) then
         call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetNonlinearSolver', &
                             'Invalid nonlinear solver type')
         flag = CV_ILL_INPUT
@@ -3548,7 +3804,16 @@
     if (allocated(me%NLS)) deallocate(me%NLS)
     allocate(me%NLS, source=NLS)
 
-    ! (the system function is selected in cvNlsSys from the solver type)
+    ! set the nonlinear system RHS function
+    if (.not. associated(me%f)) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetNonlinearSolver', 'The ODE RHS function is NULL')
+        flag = CV_ILL_INPUT
+        return
+    end if
+    me%nls_f => me%f
+
+    ! (the system function is selected in cvNlsSys from the solver type;
+    ! a hybrid solver calls nls_residual and nls_fp_function)
 
     ! set the nonlinear solver's maximum number of iterations
     retval = me%NLS%set_max_iters(NLS_MAXCOR)
@@ -3621,6 +3886,39 @@
 
 !*****************************************************************************************
 !>
+!  `cvNlsGetUpdateNorm`: the WRMS norm of the last update, `delnrm` (set
+!  by the convergence test).
+
+    function cvNlsGetUpdateNorm(me, delnrm) result(flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(out) :: delnrm  !! norm of the last update
+    integer :: flag  !! `SUN_SUCCESS`
+
+    delnrm = me%delnrm
+    flag = SUN_SUCCESS
+
+    end function cvNlsGetUpdateNorm
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `cvNlsGetConvRate`: the estimated convergence rate `crate`.
+
+    function cvNlsGetConvRate(me, crate) result(flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    real(wp),intent(out) :: crate  !! estimated convergence rate
+    integer :: flag  !! `SUN_SUCCESS`
+
+    crate = me%crate
+    flag = SUN_SUCCESS
+
+    end function cvNlsGetConvRate
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
 !  `cvNlsResidual`: `res = rl1*zn[1] + ycor - gamma*f(t, zn[0] + ycor)`
 
     function cvNlsResidual(me, ycor, res) result(flag)
@@ -3636,7 +3934,7 @@
     me%y = me%zn(:,0) + ycor
 
     ! evaluate the rhs function
-    retval = me%f(me, me%tn, me%y, me%ftemp)
+    retval = me%nls_f(me, me%tn, me%y, me%ftemp)
     me%nfe = me%nfe + 1
     if (retval < 0) then
         flag = CV_RHSFUNC_FAIL
@@ -3673,7 +3971,7 @@
     me%y = me%zn(:,0) + ycor
 
     ! evaluate the rhs function
-    retval = me%f(me, me%tn, me%y, res)
+    retval = me%nls_f(me, me%tn, me%y, res)
     me%nfe = me%nfe + 1
     if (retval < 0) then
         flag = CV_RHSFUNC_FAIL
@@ -4643,6 +4941,24 @@
     v = me%constraint_corrections
     end function CVodeGetNumConstraintCorrections
 
+!>
+!  `CVodeGetNumProjEvals`: number of projections performed (0 without
+!  projection memory; C returns `CV_PROJ_MEM_NULL`).
+    pure integer(li) function CVodeGetNumProjEvals(me) result(v)
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = 0
+    if (me%proj_mem) v = me%nproj
+    end function CVodeGetNumProjEvals
+
+!>
+!  `CVodeGetNumProjFails`: number of projection failures (0 without
+!  projection memory; C returns `CV_PROJ_MEM_NULL`).
+    pure integer(li) function CVodeGetNumProjFails(me) result(v)
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    v = 0
+    if (me%proj_mem) v = me%npfails
+    end function CVodeGetNumProjFails
+
     pure integer(li) function CVDiagGetNumRhsEvals(me) result(v)
     !! f evaluations for the diagonal Jacobian approximation
     class(cvode_solver),intent(in) :: me  !! the CVODE solver
@@ -4655,6 +4971,55 @@
     class(cvode_solver),intent(in) :: me  !! the CVODE solver
     v = me%di_last_flag
     end function CVDiagGetLastFlag
+
+    subroutine CVodeSetNlsRhsFn(me, f, flag)
+    !! `CVodeSetNlsRhsFn`: an alternative right-hand side function for the
+    !! nonlinear system functions (absent: the ODE right-hand side).
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    procedure(cv_rhs_fn),optional :: f  !! the right-hand side for the nonlinear system
+    integer,intent(out) :: flag  !! `CV_SUCCESS`
+    if (present(f)) then
+        me%nls_f => f
+    else
+        me%nls_f => me%f
+    end if
+    flag = CV_SUCCESS
+    end subroutine CVodeSetNlsRhsFn
+
+    subroutine CVodeGetJac(me, J, flag)
+    !! `CVodeGetJac`: a copy of the saved Jacobian (C returns a pointer to it).
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    class(sun_matrix),allocatable,intent(out) :: J  !! the saved Jacobian (not allocated if there is none)
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS` or `CVLS_LMEM_NULL`
+    if (me%ls_kind /= LS_GENERIC) then
+        flag = CVLS_LMEM_NULL
+        return
+    end if
+    if (allocated(me%savedJ)) allocate(J, source=me%savedJ)
+    flag = CVLS_SUCCESS
+    end subroutine CVodeGetJac
+
+    subroutine CVodeGetLinSolveStats(me, njevals, nfevalsLS, nliters, nlcfails, &
+                                     npevals, npsolves, njtsetups, njtimes)
+    !! `CVodeGetLinSolveStats`: the linear solver interface statistics.
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    integer(li),intent(out) :: njevals  !! Jacobian evaluations
+    integer(li),intent(out) :: nfevalsLS  !! f evaluations for DQ Jacobians and J*v
+    integer(li),intent(out) :: nliters  !! linear iterations
+    integer(li),intent(out) :: nlcfails  !! linear convergence failures
+    integer(li),intent(out) :: npevals  !! preconditioner evaluations
+    integer(li),intent(out) :: npsolves  !! preconditioner solves
+    integer(li),intent(out) :: njtsetups  !! J*v setup evaluations
+    integer(li),intent(out) :: njtimes  !! J*v evaluations
+    njevals   = me%nje
+    nfevalsLS = me%nfeDQ
+    nliters   = me%nli
+    nlcfails  = me%ncfl
+    npevals   = me%npe
+    npsolves  = me%nps
+    njtsetups = me%njtsetup
+    njtimes   = me%njtimes
+    end subroutine CVodeGetLinSolveStats
 
 !>
 !  `CVodeGetNumJacEvals`: number of Jacobian evaluations.
@@ -4763,6 +5128,28 @@
     y = me%y
     end subroutine CVodeGetCurrentState
 
+    subroutine CVodeGetNonlinearSystemData(me, tcur, ypred, yn, fn, gamma, rl1, zn1)
+    !! `CVodeGetNonlinearSystemData`: the data of the current nonlinear
+    !! system (e.g. for a custom linear or nonlinear solver). C returns
+    !! pointers to the internal vectors; here the requested ones are copied.
+    !! (The C `user_data` output is the solver object itself.)
+    class(cvode_solver),intent(in) :: me  !! the CVODE solver
+    real(wp),intent(out),optional :: tcur  !! current time
+    real(wp),dimension(:),intent(out),optional :: ypred  !! the predicted solution, zn(:,0)
+    real(wp),dimension(:),intent(out),optional :: yn  !! the current solution iterate
+    real(wp),dimension(:),intent(out),optional :: fn  !! f(tcur, yn)
+    real(wp),intent(out),optional :: gamma  !! the current gamma (h*rl1)
+    real(wp),intent(out),optional :: rl1  !! the scalar 1/l(1)
+    real(wp),dimension(:),intent(out),optional :: zn1  !! the Nordsieck array column zn(:,1)
+    if (present(tcur))  tcur  = me%tn
+    if (present(ypred)) ypred = me%zn(:,0)
+    if (present(yn))    yn    = me%y
+    if (present(fn))    fn    = me%ftemp
+    if (present(gamma)) gamma = me%gamma
+    if (present(rl1))   rl1   = me%rl1
+    if (present(zn1))   zn1   = me%zn(:,1)
+    end subroutine CVodeGetNonlinearSystemData
+
     subroutine CVodeGetErrWeights(me, eweight)
     !! The error weight vector `ewt`.
     class(cvode_solver),intent(in) :: me  !! the CVODE solver
@@ -4868,7 +5255,11 @@
     ! rootfinding stats
     call put_long('Root fn evals', me%nge)
 
-    ! [not yet ported] projection stats
+    ! projection stats
+    if (me%proj_mem) then
+        call put_long('Projection fn evals', me%nproj)
+        call put_long('Projection fails', me%npfails)
+    end if
 
     if (fmt == SUN_OUTPUTFORMAT_CSV) write(iunit, '(a)') ''   ! end the CSV record
     flag = CV_SUCCESS

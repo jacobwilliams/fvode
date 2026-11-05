@@ -70,3 +70,23 @@ main = "trace_roberts_bdf_dense.f90"
 name = "trace_osc_bdf_stald"
 source-dir = "reference/fortran"
 main = "trace_osc_bdf_stald.f90"
+
+[[example]]
+name = "trace_resize_adams_fp_same"
+source-dir = "reference/fortran"
+main = "trace_resize_adams_fp_same.f90"
+
+[[example]]
+name = "trace_resize_adams_fp_grow"
+source-dir = "reference/fortran"
+main = "trace_resize_adams_fp_grow.f90"
+
+[[example]]
+name = "trace_resize_bdf_newton_same"
+source-dir = "reference/fortran"
+main = "trace_resize_bdf_newton_same.f90"
+
+[[example]]
+name = "trace_resize_bdf_newton_grow"
+source-dir = "reference/fortran"
+main = "trace_resize_bdf_newton_grow.f90"

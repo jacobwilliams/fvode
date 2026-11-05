@@ -108,13 +108,15 @@
     end if
     me%jac_user => null()
 
+    ! initialize the linear system function (internal)
+    me%user_linsys = .false.
+    me%linsys_user => null()
+
     ! initialize Jacobian-times-vector data (internal DQ)
     me%jtimesDQ = .true.
     me%jtsetup_user => null()
     me%jtimes_user => null()
     me%jt_f => null()
-
-    ! [not yet ported] user linear system function (CVodeSetLinSysFn)
 
     ! initialize the preconditioner (none)
     me%pset_user => null()
@@ -373,6 +375,44 @@
 
 !*****************************************************************************************
 !>
+!  `CVodeSetLinSysFn`: set a user function that computes the linear system
+!  matrix `A = I - gamma*J` directly (absent: the internal one, from the
+!  Jacobian). Requires a matrix-based linear solver.
+
+    module subroutine CVodeSetLinSysFn(me, linsys, flag)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    procedure(cv_linsys_fn),optional :: linsys  !! user linear system function
+    integer,intent(out) :: flag  !! `CVLS_SUCCESS`, `CVLS_LMEM_NULL` or `CVLS_ILL_INPUT`
+
+    if (me%ls_kind /= LS_GENERIC) then
+        call cvProcessError(me, CVLS_LMEM_NULL, 'CVodeSetLinSysFn', 'Linear solver memory is NULL.')
+        flag = CVLS_LMEM_NULL
+        return
+    end if
+
+    ! return with failure if linsys cannot be used
+    if (present(linsys) .and. .not. allocated(me%A)) then
+        call cvProcessError(me, CVLS_ILL_INPUT, 'CVodeSetLinSysFn', &
+            'Linear system setup routine cannot be supplied for NULL SUNMatrix')
+        flag = CVLS_ILL_INPUT
+        return
+    end if
+
+    ! set the linear system routine pointer, and update relevant flags
+    if (present(linsys)) then
+        me%user_linsys = .true.
+        me%linsys_user => linsys
+    else
+        me%user_linsys = .false.
+        me%linsys_user => null()
+    end if
+
+    flag = CVLS_SUCCESS
+
+    end subroutine CVodeSetLinSysFn
+!*****************************************************************************************
+!>
 !  `CVodeSetJacFn`: set a user Jacobian function, or (if `jac` is not
 !  present) go back to the internal difference-quotient Jacobian.
 
@@ -516,8 +556,12 @@
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
     integer :: flag  !! the flag of the linear solver's initialize, or `CVLS_ILL_INPUT`
 
-    ! set up the Jacobian (matrix-based case)
-    if (allocated(me%A)) then
+    ! test for valid combinations of matrix & Jacobian routines
+    if (allocated(me%A) .and. me%user_linsys) then
+        ! matrix-based case with a user-supplied linear system function
+        continue
+    else if (allocated(me%A)) then
+        ! matrix-based case with the internal linear system function:
         ! the internal DQ Jacobian needs a dense or band matrix
         if (me%jacDQ) then
             if (me%A%get_id() /= SUNMATRIX_DENSE .and. me%A%get_id() /= SUNMATRIX_BAND) then
@@ -532,9 +576,11 @@
         ! allocate internally saved Jacobian if not already done
         if (.not. allocated(me%savedJ)) allocate(me%savedJ, source=me%A)
     else
-        ! matrix-free: no Jacobian
+        ! matrix-free: no Jacobian or linear system function
         me%jacDQ = .false.
         me%jac_user => null()
+        me%user_linsys = .false.
+        me%linsys_user => null()
     end if
 
     ! reset counters
@@ -587,11 +633,12 @@
     integer :: flag  !! 0 on success, > 0 for a recoverable failure, < 0 otherwise
 
     real(wp) :: dgamma  !! |gamma/gammap - 1|
-    integer :: retval  !! return flag of cvLsLinSys
+    integer :: retval  !! return flag of the linear system function
+    logical :: jc  !! was the Jacobian re-evaluated? (user linear system function)
 
     ! use nst, gamma/gammap, and convfail to set J/P eval. flag jok
     dgamma  = abs((me%gamma / me%gammap) - ONE)
-    me%jbad = (me%nst == 0) .or. &
+    me%jbad = (me%nst == 0) .or. me%first_step_after_resize .or. &
               (me%nst >= me%nstlj + me%msbj) .or. &
               ((convfail == CV_FAIL_BAD_J) .and. (dgamma < me%dgmax_jbad)) .or. &
               (convfail == CV_FAIL_OTHER)
@@ -599,8 +646,15 @@
     ! setup the linear system if necessary
     if (allocated(me%A)) then
 
-        ! solver calls linsys to set up the linear system
-        retval = cvLsLinSys(me, me%tn, me%y, me%ftemp, .not. me%jbad, me%gamma)
+        ! update J if appropriate and evaluate A = I - gamma J
+        if (me%user_linsys) then
+            jc = me%jcur
+            retval = me%linsys_user(me, me%tn, me%y, me%ftemp, me%A, .not. me%jbad, jc, &
+                                    me%gamma, me%vtemp1, me%vtemp2, me%vtemp3)
+            me%jcur = jc
+        else
+            retval = cvLsLinSys(me, me%tn, me%y, me%ftemp, .not. me%jbad, me%gamma)
+        end if
 
         ! update counters
         if (me%jcur) then
@@ -611,7 +665,19 @@
 
         ! check linsys return flag
         if (retval /= CVLS_SUCCESS) then
-            flag = retval
+            if (me%user_linsys) then
+                if (retval < 0) then
+                    call cvProcessError(me, CVLS_JACFUNC_UNRECVR, 'cvLsSetup', &
+                        'The Jacobian routine failed in an unrecoverable manner.')
+                    me%ls_last_flag = CVLS_JACFUNC_UNRECVR
+                    flag = -1
+                else
+                    me%ls_last_flag = CVLS_JACFUNC_RECVR
+                    flag = 1
+                end if
+            else
+                flag = retval
+            end if
             return
         end if
 
@@ -962,6 +1028,8 @@
     if (allocated(me%A))        deallocate(me%A)
     if (allocated(me%LS))       deallocate(me%LS)
     me%jac_user => null()
+    me%user_linsys = .false.
+    me%linsys_user => null()
     me%pset_user => null()
     me%psolve_user => null()
     me%jtsetup_user => null()
