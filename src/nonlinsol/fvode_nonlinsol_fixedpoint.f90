@@ -144,6 +144,7 @@
     integer :: flag  !! return flag (0 on success)
 
     integer :: retval  !! return flag of the called function
+    integer :: i  !! element index
 
     ! reset counter
     me%niters     = 0
@@ -156,7 +157,7 @@
     do while (me%curiter < me%maxiters)
 
         ! update previous solution guess
-        me%yprev = ycor
+        call copy(ycor, me%yprev)
 
         ! compute fixed-point iteration function, store in gy
         retval = prob%nls_sys(ycor, me%gy)
@@ -167,7 +168,7 @@
 
         ! perform fixed point update, based on choice of acceleration or not
         if (me%m == 0) then
-            ycor = me%gy                    ! basic fixed-point solver
+            call copy(me%gy, ycor)          ! basic fixed-point solver
         else
             call me%anderson_accelerate(me%gy, ycor, me%yprev, me%curiter)
         end if
@@ -176,7 +177,9 @@
         me%niters = me%niters + 1
 
         ! compute change in solution
-        me%delta = ycor - me%yprev
+        do i = 1, size(ycor)
+            me%delta(i) = ycor(i) - me%yprev(i)
+        end do
 
         ! test for convergence
         retval = prob%nls_convtest(me, ycor, me%delta, tol, w)
@@ -205,6 +208,19 @@
     ! increment the convergence failure count and return
     me%nconvfails = me%nconvfails + 1
     flag = SUN_NLS_CONV_RECVR
+
+    contains
+
+        pure subroutine copy(x, z)
+        !! z = x with an explicit loop (C: N_VScale(ONE, x, z)); for the
+        !! small vectors typical here this avoids a memmove call
+        real(wp),dimension(:),intent(in) :: x  !! source
+        real(wp),dimension(:),intent(out) :: z  !! destination
+        integer :: j  !! element index
+        do j = 1, size(x)
+            z(j) = x(j)
+        end do
+        end subroutine copy
 
     end function fixedpoint_solve
 !*****************************************************************************************

@@ -158,6 +158,7 @@
 
         !---- nonlinear solver
         logical :: ownNLS = .false.  !! is NLS the default Newton solver created by CVODE?
+        logical :: nls_fixedpoint = .false.  !! is NLS a fixed-point solver? (its type, saved when attached)
         class(sun_nonlinear_solver),allocatable,public :: NLS  !! the attached nonlinear solver (a copy; public so that solver-specific settings and statistics are accessible)
         integer :: convfail = CV_NO_FAILURES            !! for the linear solver setup
 
@@ -2686,18 +2687,34 @@
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    integer :: j, k  !! loop indices
-
     me%tn = me%tn + me%h
     if (me%tstopset) then
         if ((me%tn - me%tstop) * me%h > ZERO) me%tn = me%tstop
     end if
 
-    do k = 1, me%q
-        do j = me%q, k, -1
-            me%zn(:,j-1) = me%zn(:,j-1) + me%zn(:,j)
+    call predict_zn(me%zn, size(me%zn, 1), me%q)
+
+    contains
+
+        pure subroutine predict_zn(z, n, q)
+        !! The Pascal-triangle prediction of C `cvPredict`: for k = 1..q and
+        !! j = q..k, `zn(:,j-1) += zn(:,j)`. Update (k,j) depends only on
+        !! (k-1,j) and (k,j+1), so the updates on an anti-diagonal
+        !! `L = k + q - j` (columns q-L..q-1) are independent and each reads
+        !! its right neighbour as it was before the level. Each level is
+        !! therefore one contiguous loop over the flat array, in ascending
+        !! order (as in DVODE): the same operations on the same operands as
+        !! the C loop order, without the per-column loop overhead.
+        integer,intent(in) :: n  !! problem size
+        integer,intent(in) :: q  !! current order
+        real(wp),dimension(n*(q+1)),intent(inout) :: z  !! the Nordsieck array columns 0..q, flattened
+        integer :: i, lev  !! flat index and the level
+        do lev = 1, q
+            do i = (q - lev) * n + 1, q * n
+                z(i) = z(i) + z(i + n)
+            end do
         end do
-    end do
+        end subroutine predict_zn
 
     end subroutine cvPredict
 !*****************************************************************************************
@@ -3351,7 +3368,7 @@
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    integer :: i, j  !! loop indices
+    integer :: i  !! loop index
 
     me%nst   = me%nst + 1
     me%nscon = me%nscon + 1
@@ -3367,17 +3384,11 @@
     me%tau(1) = me%h
 
     ! apply correction to column j of zn: l_j * Delta_n
-    do j = 0, me%q
-        me%zn(:,j) = me%zn(:,j) + me%l(j) * me%acor
-    end do
+    call add_correction(me%zn, size(me%zn, 1), me%q, me%l, me%acor)
 
     ! apply the projection correction to column j of zn: p_j * Delta_n
     ! (tempv = acorP)
-    if (me%proj_applied) then
-        do j = 0, me%q
-            me%zn(:,j) = me%zn(:,j) + me%proj_p(j) * me%tempv
-        end do
-    end if
+    if (me%proj_applied) call add_correction(me%zn, size(me%zn, 1), me%q, me%proj_p, me%tempv)
 
     me%qwait = me%qwait - 1
     if ((me%qwait == 1) .and. (me%q /= me%qmax)) then
@@ -3385,6 +3396,25 @@
         me%saved_tq5 = me%tq(5)
         me%indx_acor = me%qmax
     end if
+
+    contains
+
+        pure subroutine add_correction(zn, n, q, c, v)
+        !! `zn(:,j) = zn(:,j) + c(j)*v` for j = 0..q (C: N_VScaleAddMulti);
+        !! explicit-shape arrays avoid the descriptor overhead, which
+        !! dominates for small systems
+        integer,intent(in) :: n  !! problem size
+        integer,intent(in) :: q  !! current order
+        real(wp),dimension(n,0:q),intent(inout) :: zn  !! the Nordsieck array (columns 0..q)
+        real(wp),dimension(0:q),intent(in) :: c  !! the coefficients
+        real(wp),dimension(n),intent(in) :: v  !! the correction vector
+        integer :: i, k  !! element and column indices
+        do k = 0, q
+            do i = 1, n
+                zn(i,k) = zn(i,k) + c(k) * v(i)
+            end do
+        end do
+        end subroutine add_correction
 
     end subroutine cvCompleteStep
 !*****************************************************************************************
@@ -3803,6 +3833,7 @@
     ! free any existing nonlinear solver and attach the new one
     if (allocated(me%NLS)) deallocate(me%NLS)
     allocate(me%NLS, source=NLS)
+    me%nls_fixedpoint = (itype == SUNNONLINEARSOLVER_FIXEDPOINT)
 
     ! set the nonlinear system RHS function
     if (.not. associated(me%f)) then
@@ -3875,7 +3906,7 @@
     real(wp),dimension(:),intent(inout) :: res  !! nonlinear system function value (output)
     integer :: flag  !! `CV_SUCCESS`, `RHSFUNC_RECVR` or `CV_RHSFUNC_FAIL`
 
-    if (me%NLS%get_type() == SUNNONLINEARSOLVER_FIXEDPOINT) then
+    if (me%nls_fixedpoint) then
         flag = cvNlsFPFunction(me, ycor, res)
     else
         flag = cvNlsResidual(me, ycor, res)

@@ -149,7 +149,8 @@
 
     integer(ip) :: i, j, k, l, m, n  !! row, column and step indices, pivot row, matrix dimensions
     real(wp) :: mult, a_kj  !! row multiplier 1/a(k,k), and the element a(k,j)
-    real(wp),dimension(size(a,2)) :: temp  !! temporary row for swapping
+    real(wp) :: temp  !! temporary for swapping (C swaps element by element; an automatic
+                      !! row here would be heap-allocated by gfortran on every call)
 
     m = size(a, 1)
     n = size(a, 2)
@@ -172,9 +173,11 @@
 
         ! swap a(k,:) and a(l,:) if necessary
         if (l /= k) then
-            temp = a(l,:)
-            a(l,:) = a(k,:)
-            a(k,:) = temp
+            do j = 1, n
+                temp = a(l,j)
+                a(l,j) = a(k,j)
+                a(k,j) = temp
+            end do
         end if
 
         ! scale the elements below the diagonal in column k by 1/a(k,k):
