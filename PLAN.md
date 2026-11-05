@@ -31,7 +31,7 @@ Build it with **fpm** and run every tool from the **pixi** environment.
 | Upstream file | Lines | Content | FVODE target |
 |---|---|---|---|
 | `cvode.c` | 5003 | Main integrator: `CVodeCreate/Init/ReInit`, `CVode`, `cvStep`, `cvHin`, `cvPredict`, `cvSet*`, `cvAdjust*`, `cvDoErrorTest`, `cvCompleteStep`, `cvPrepareNextStep`, `cvSetEta`, `cvChooseEta`, `cvBDFStab`/`cvSLdet`, root finding (`cvRcheck1-3`, `cvRootfind`), `CVodeGetDky`, `cvEwtSet*`, constraints | `fvode_core.f90`, `fvode_root.f90`, `fvode_stab.f90` |
-| `cvode_impl.h` | 800 | `CVodeMemRec` (157 `cv_` fields), constants (`L_MAX`, `ETAMX*`, `CORTES`, …) | `fvode_types.f90`, `fvode_parameters.f90` |
+| `cvode_impl.h` | 800 | `CVodeMemRec` (157 `cv_` fields), constants (`L_MAX`, `ETA_*_DEFAULT`, `CORTES`, …) | `fvode_types.f90`, `fvode_internal_parameters.f90` |
 | `cvode_io.c` | 1841 | `CVodeSet*` / `CVodeGet*` / `CVodePrintAllStats` | type-bound setters/getters in `fvode_io.f90` |
 | `cvode_nls.c` | 490 | Interface between CVODE and the nonlinear solver (`cvNlsResid`, `cvNlsLSetup`, `cvNlsConvTest`, …) | `fvode_nls.f90` |
 | `cvode_ls.c` / `cvode_ls_impl.h` | 1976 | Generic linear solver interface: DQ Jacobian (dense/band), Jacobian-times-vector DQ, `cvLsSetup/Solve`, `msbj`/`dgmax` heuristics | `fvode_ls.f90` |
@@ -149,7 +149,7 @@ keep them polymorphic:
 | `SUNRabs`, `SUNMAX`, `SUNMIN` | `abs`, `max`, `min` |
 | `SUNRpowerR(x,y)`, `SUNRpowerI` | `x**y` (real), `x**i` (integer). Check against `pow` for edge cases |
 | `SUNRsqrt(x)` | `merge(sqrt(x), 0, x>0)`, the same guard as SUNDIALS |
-| `#define` constants | `real(wp), parameter` in `fvode_parameters` (`ONE`, `ETAMX1 = 10000`, `CORTES = 0.1`, …), same names |
+| `#define` constants | `parameter`s with the same names: public codes in `fvode_parameters`, internal ones (`ONE`, `CORTES`, `ETA_MAX_FS_DEFAULT`, …) in `fvode_internal_parameters` (not re-exported). Only rename: `TINY` → `CV_TINY` (clashes with the intrinsic) |
 | `static` functions | `private` module procedures |
 | `goto`-free loops with `break` | `do … exit`; named blocks/`cycle` where C uses `continue` |
 | `0`-based arrays | explicit lower bounds (`0:`) where the algorithm indexes from 0 |
@@ -166,8 +166,9 @@ fvode/
 ├── LICENSE, LICENSE-SUNDIALS
 ├── src/
 │   ├── fvode.f90                 ! umbrella module (public API)
-│   ├── fvode_kinds.f90
-│   ├── fvode_parameters.f90      ! constants + return codes
+│   ├── fvode_kinds.F90           ! wp / ip / li kinds (cpp-selectable precision)
+│   ├── fvode_parameters.f90      ! public constants + return codes
+│   ├── fvode_internal_parameters.f90 ! internal CVODE constants
 │   ├── fvode_math.f90
 │   ├── fvode_nvector.f90
 │   ├── core/  fvode_types.f90 fvode_core.f90 fvode_root.f90 fvode_stab.f90
@@ -186,58 +187,51 @@ fvode/
 
 ## 5. Build and environment (pixi + fpm)
 
-### 5.1 `pixi.toml` additions
+The real configuration is in [pixi.toml](pixi.toml) and [fpm.toml](fpm.toml). This section
+summarises it.
 
-```toml
-[dependencies]
-gfortran = "16.*"
-fpm = ">=0.13.0,<0.14"
-python = "3.13.*"
-ford = ">=7.0"
+**Default environment** (gfortran 16, fpm, python, FORD):
 
-[feature.reference.dependencies]      # pinned C SUNDIALS for verification
-c-compiler = "*"
-cmake = ">=3.24"
-ninja = "*"
-numpy = "*"
+| Task | What it does |
+|---|---|
+| `pixi run build` | `fpm build --profile release` |
+| `pixi run test` | `fpm test --profile debug` (test-drive suites in `test/`) |
+| `pixi run examples` | `fpm run --example --all` |
+| `pixi run lint` | debug build with `-Wall -Wextra -std=f2018 -fcheck=all` |
+| `pixi run docs` | FORD docs into `doc/` (registers graphviz plugins first: pixi skips conda post-link scripts) |
 
-[environments]
-default   = { solver-group = "main" }
-reference = { features = ["reference"], solver-group = "main" }
+Every Fortran build uses `--flag '-ffp-contract=off'`.
 
-[tasks]
-build    = "fpm build --profile release"
-test     = "fpm test --profile debug"
-examples = "fpm run --example --all --profile release"
-docs     = "ford fpm.toml"
-lint     = "fpm build --profile debug --flag '-Wall -Wextra -std=f2018 -fcheck=all'"
+**`reference` environment** (cmake, ninja, git, plus a C compiler: `gcc 16` on Linux,
+because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `c-compiler`
+(clang) on macOS; Windows is not supported for this env):
 
-[feature.reference.tasks]
-ref-fetch = "git clone --depth 1 --branch v7.9.0 https://github.com/LLNL/sundials.git reference/sundials"
-ref-build = { cmd = "cmake -S reference/sundials -B reference/build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS=-ffp-contract=off -DEXAMPLES_ENABLE_C=ON -DBUILD_ARKODE=OFF -DBUILD_CVODES=OFF -DBUILD_IDA=OFF -DBUILD_IDAS=OFF -DBUILD_KINSOL=OFF && cmake --build reference/build", depends-on = ["ref-fetch"] }
-compare  = { cmd = "python reference/compare.py", depends-on = ["ref-build", "examples"] }
-```
+| Task | What it does |
+|---|---|
+| `ref-build` | [reference/build_reference.sh](reference/build_reference.sh): clone tag `v7.9.0`, build static CVODE + serial components with `-ffp-contract=off` into `reference/install` (runs once) |
+| `ref-run` | [reference/run_reference.sh](reference/run_reference.sh): regenerate `test/data/sundials_constants.txt`, then build and run every `reference/trace_*.c` into `reference/out/trace_*.csv` |
+| `compare` | [reference/compare.py](reference/compare.py): diff `reference/out/fvode_<name>.csv` against `trace_<name>.csv` |
 
 We build the reference from source at the pinned tag, not from the conda-forge `sundials`
-package, so that the version matches exactly and we can add per-step trace output.
+package, so the version matches exactly.
 
-### 5.2 `fpm.toml` changes
-
-* `[dev-dependencies] test-drive = { git = "https://github.com/fortran-lang/test-drive", tag = "v0.5.0" }`
-* `[preprocess] [preprocess.cpp] macros = []` for precision selection.
-* Fix `keywords` (`["ode", "cvode", "bdf", "adams", "stiff", "integrator"]`).
-* Keep `auto-tests`/`auto-examples`, and add `[[example]]` entries if names need control.
+**fpm.toml:** `test-drive` v0.5.0 is a dev-dependency. Kinds come from `fvode_kinds.F90`
+(preprocessed, `-DREAL32` / `-DREAL128` / `-DINT32`). The FORD settings moved to
+`[extra.ford]`: FORD ignored the old `[extra.fvode]` section, and `front_page_file`
+is not a FORD 7 option.
 
 ## 6. Verification strategy
 
 1. **Unit tests per ported kernel** (test-drive): vector ops, dense/band LU vs known
    factors, Krylov solvers on small SPD/non-symmetric systems, Newton/fixed point on
    scalar problems.
-2. **Step-trace comparison (the main fidelity check).** Add a small C harness in
-   `reference/` that runs a problem through C CVODE and logs, for every internal step,
-   `nst, t, h, q, hu, qu, nfe, nni, netf, ncfn, nsetups, acnrm, ‖zn[0]‖`. FVODE gets an
-   equivalent optional trace hook (`solver%set_step_trace(unit)`). `reference/compare.py`
-   diffs the two traces:
+2. **Step-trace comparison (the main fidelity check).** Each C driver
+   `reference/trace_<name>.c` runs a problem in `CV_ONE_STEP` mode and writes one CSV row
+   per internal step through the public `CVodeGet*` API (see
+   [reference/trace_common.h](reference/trace_common.h)):
+   `nst,t,hu,qu,hcur,qcur,nfe,nni,nncf,netf,nsetups,njev,nfels,flag,y1..yN`.
+   This needs no changes to SUNDIALS. The matching FVODE program writes the same columns to
+   `reference/out/fvode_<name>.csv`. `reference/compare.py` diffs the two traces:
    * integer columns (`nst`, `q`, counters) must match **exactly**,
    * real columns must match to `≤ 1e-12` relative (target: bitwise with `-ffp-contract=off`).
    The first divergent step points straight to the routine that was mistranslated.
@@ -258,7 +252,17 @@ package, so that the version matches exactly and we can add per-step trace outpu
 Each phase ends with green tests and a commit. The order follows dependencies, so every
 phase can be verified on its own.
 
-### Phase 0: Scaffolding (½ day)
+### Phase 0: Scaffolding ✅ done
+Delivered: `LICENSE` (MIT + derivation note), `LICENSE-SUNDIALS`, `fvode_kinds`,
+`fvode_parameters`, `fvode_internal_parameters`, and the `fvode` umbrella module. There is a
+unit test that checks all 207 upstream constants bitwise against
+`test/data/sundials_constants.txt`, which is generated from the C headers by
+`reference/constants.c` plus the `.c`-local `#define`s parsed by `reference/parse_defines.py`.
+The reference build and trace harness exist, with two traces so far:
+`vdp_adams_fp` (Adams + fixed point, 217 steps; Phase 2 target) and
+`roberts_bdf_dense` (BDF + Newton + dense DQ Jacobian, 648 steps; Phase 3 target).
+
+Original task list:
 * Update `pixi.toml` (tasks, reference feature) and `fpm.toml` (test-drive, keywords).
 * Add `LICENSE-SUNDIALS`, `fvode_kinds`, `fvode_parameters` (all constants and return codes
   copied from `cvode.h`, `cvode_impl.h`, `cvode_ls.h`, `sundials_*` headers).

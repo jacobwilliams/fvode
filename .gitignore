@@ -1,0 +1,10 @@
+build/
+doc/
+.pixi/
+reference/sundials/
+reference/build/
+reference/install/
+reference/out/
+*.mod
+*.o
+__pycache__/
