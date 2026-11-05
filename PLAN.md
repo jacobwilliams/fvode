@@ -84,8 +84,16 @@ exactly**, including floating-point operation order. Examples:
   use `norm2`: it rescales internally and would change rounding.
 * `N_VLinearSum`: keep the special cases (`a==1, b==1`, `a==1, b==-1`, `a==b`, …), because
   they change which operations run (for example `y - x` instead of `1*y + (-1)*x`).
-* Fused ops (`N_VLinearCombination`, `N_VScaleAddMulti`) are used in `cvPredict`,
-  `cvRescale` and `CVodeGetDky`. Port the serial loop order exactly.
+* Fused and vector-array ops (`N_VLinearCombination`, `N_VScaleAddMulti`,
+  `N_VDotProdMulti`, `N_VScaleVectorArray`) are **disabled by default** for serial
+  vectors. A default CVODE run therefore uses the generic fallbacks in
+  `sundials_nvector.c` (built from `N_VScale`/`N_VLinearSum`/`N_VDotProd`), and those are
+  what we port, not the fused serial kernels.
+* Aliasing (`N_VLinearSum(a, x, b, y, y)`) is common. All vector dummies have the
+  `target` attribute, so aliased calls are legal when the actual arguments are contiguous
+  targets. Arrays of vectors (`N_Vector*`) are arrays of `type(nvec_ptr)`. The C in-place
+  fast paths (`axpy`, scale-by) give the same bits as the general cases, so no pointer
+  identity test is needed.
 
 The Nordsieck array `cv_zn[L_MAX]` (an array of N_Vectors) becomes
 `real(wp), allocatable :: zn(:,:)` with bounds `zn(1:n, 0:L_MAX-1)`. **Keep zero-based
@@ -146,9 +154,12 @@ keep them polymorphic:
 |---|---|
 | `sunrealtype` | `real(wp)` |
 | `long int` counters | `integer(int64)` |
-| `SUNRabs`, `SUNMAX`, `SUNMIN` | `abs`, `max`, `min` |
-| `SUNRpowerR(x,y)`, `SUNRpowerI` | `x**y` (real), `x**i` (integer). Check against `pow` for edge cases |
-| `SUNRsqrt(x)` | `merge(sqrt(x), 0, x>0)`, the same guard as SUNDIALS |
+| `SUNRabs` | `abs` |
+| `SUNMAX`, `SUNMIN` | `sun_max`, `sun_min` (C ternary semantics; **not** `max`/`min`, which differ for NaN and signed zeros) |
+| `SUNRpowerR(x,y)` | `sun_rpower_r` = `x**y` (gfortran calls the same libm `pow`; verified bitwise) |
+| `SUNRpowerI(x,i)` | `sun_rpower_i`, a repeated-multiplication loop (**not** `x**i`: gfortran's binary powering differs by ~1 ulp, e.g. 1.1⁵) |
+| `SUNRsqrt(x)` | `sun_rsqrt` (`0` for `x <= 0`) |
+| `SUNRdifferentsign` | `sun_rdifferentsign` (sign bit via `sign(1, x)`) |
 | `#define` constants | `parameter`s with the same names: public codes in `fvode_parameters`, internal ones (`ONE`, `CORTES`, `ETA_MAX_FS_DEFAULT`, …) in `fvode_internal_parameters` (not re-exported). Only rename: `TINY` → `CV_TINY` (clashes with the intrinsic) |
 | `static` functions | `private` module procedures |
 | `goto`-free loops with `break` | `do … exit`; named blocks/`cycle` where C uses `continue` |
@@ -169,8 +180,8 @@ fvode/
 │   ├── fvode_kinds.F90           ! wp / ip / li kinds (cpp-selectable precision)
 │   ├── fvode_parameters.f90      ! public constants + return codes
 │   ├── fvode_internal_parameters.f90 ! internal CVODE constants
-│   ├── fvode_math.f90
-│   ├── fvode_nvector.f90
+│   ├── fvode_math.f90            ! sundials_math helpers
+│   ├── fvode_nvector.f90         ! serial N_Vector ops on real(wp) arrays
 │   ├── core/  fvode_types.f90 fvode_core.f90 fvode_root.f90 fvode_stab.f90
 │   │          fvode_io.f90 fvode_nls.f90 fvode_ls.f90 fvode_diag.f90
 │   │          fvode_bandpre.f90 fvode_proj.f90
@@ -269,10 +280,23 @@ Original task list:
 * Build the C reference (`pixi run -e reference ref-build`) and write the C trace harness.
 * **Exit criterion:** `pixi run build`, `pixi run test` (empty), and `pixi run -e reference ref-build` all succeed.
 
-### Phase 1: Math and vector kernels
-* `fvode_math`, then `fvode_nvector` with every serial N_Vector op that CVODE and the solvers call
-  (grep `N_V` across the in-scope files to get the exact list).
-* **Exit criterion:** unit tests compare each op bitwise with C outputs, produced by a tiny C driver.
+### Phase 1: Math and vector kernels ✅ done
+* `fvode_math`: `sun_min/max/sqr/rsqrt/rabs`, `sun_ipower_i`, `sun_rpower_i`,
+  `sun_rpower_r`, `sun_rsamesign/differentsign`, `sun_rcompare(_tol)`. Pure Fortran, no C interop.
+* `fvode_nvector`: every serial op that the in-scope files call: `LinearSum` (all special
+  cases), `Const`, `Prod`, `Div`, `Scale`, `Abs`, `Inv`, `AddConst`, `DotProd`, `MaxNorm`,
+  `WrmsNorm`, `WSqrSumLocal`, `Min`, `Compare`, `InvTest`, `ConstrMask`, `MinQuotient`, plus
+  the generic fallbacks of `LinearCombination`, `ScaleAddMulti`, `DotProdMulti`,
+  `ScaleVectorArray`.
+* Verified: [reference/nvector_ops.c](reference/nvector_ops.c) runs each op through the real
+  SUNDIALS API, including the aliased in-place calls, on 257-element inputs with mixed
+  magnitudes, zeros and constraint values. `test/test_nvector.f90` reproduces each op and
+  requires **bitwise** equality, in both debug and release (`-O3`) builds. Mutation checks
+  confirmed the tests catch a replaced `N_VLinearSum` special case and `x**i` in place of the
+  `SUNRpowerI` loop.
+* Deferred to Phase 5: `N_VDotProdMultiLocal`/`AllReduce`. They are only used by the
+  non-default QR orthogonalization options of fixed-point Anderson acceleration
+  (`SUNQRAdd_ICWY_SB`, `SUNQRAdd_DCGS2_SB`).
 
 ### Phase 2: Core integrator, explicit path (functional/fixed-point iteration)
 Port in this order. Each item is a direct translation of the named C function(s):

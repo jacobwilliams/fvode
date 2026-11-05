@@ -7,6 +7,7 @@
     use iso_fortran_env, only: error_unit
     use testdrive, only: run_testsuite, new_testsuite, testsuite_type
     use test_parameters, only: collect_parameters
+    use test_nvector, only: collect_nvector
 
     implicit none
 
@@ -16,7 +17,8 @@
 
     stat = 0
 
-    testsuites = [ new_testsuite("parameters", collect_parameters) ]
+    testsuites = [ new_testsuite("parameters", collect_parameters), &
+                   new_testsuite("nvector",    collect_nvector)    ]
 
     do is = 1, size(testsuites)
         write(error_unit, fmt) "Testing:", testsuites(is)%name

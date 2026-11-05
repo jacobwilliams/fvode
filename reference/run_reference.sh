@@ -28,7 +28,12 @@ LIBS="-L$LIBDIR -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense
 } | LC_ALL=C sort > "$ROOT/test/data/sundials_constants.txt"
 echo "wrote test/data/sundials_constants.txt"
 
-# 2. step-trace drivers (trace_*.c), one CSV trace per driver
+# 2. vector operations table (bitwise reference for fvode_nvector / fvode_math)
+"$CC" $CFLAGS "$HERE/nvector_ops.c" -o "$OUT/nvector_ops" $LIBS
+"$OUT/nvector_ops" > "$ROOT/test/data/nvector_serial.txt"
+echo "wrote test/data/nvector_serial.txt"
+
+# 3. step-trace drivers (trace_*.c), one CSV trace per driver
 for f in "$HERE"/trace_*.c; do
     [ -e "$f" ] || continue
     exe="$OUT/$(basename "${f%.c}")"
