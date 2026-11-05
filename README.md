@@ -7,6 +7,36 @@ FVODE is a native Modern Fortran translation of the CVODE ODE integrator from
 translation: given the same problem and options, FVODE should take exactly the same
 steps as CVODE. This is checked by comparing step-by-step traces against the C library.
 
+### History: from Fortran to C and back
+
+CVODE comes from a long line of Fortran solvers developed at Lawrence Livermore
+National Laboratory (LLNL):
+
+* **GEAR** and **EPISODE** (1970s) were Hindmarsh's and Byrne's early
+  implementations of the Adams and BDF methods, building on Gear's DIFSUB.
+* **LSODE** (part of ODEPACK, 1980s) became the standard Fortran stiff/non-stiff
+  solver.
+* **VODE** (Brown, Byrne and Hindmarsh, 1989) combined EPISODE's
+  variable-coefficient Adams and BDF methods, written in Nordsieck form, with the
+  user interface and design of LSODE. `DVODE` is its double-precision version.
+  **VODPK** added Krylov (preconditioned GMRES) linear solvers for large systems.
+* **CVODE** (Cohen and Hindmarsh, 1994) rewrote VODE and VODPK in C. It was
+  followed by the parallel PVODE, and both were merged into the
+  [SUNDIALS](https://github.com/LLNL/sundials) suite in the early 2000s. CVODE has
+  been developed in C ever since. It now has more linear and nonlinear solver
+  options, root finding, constraint handling, projection and more.
+
+FVODE brings CVODE back to Fortran, this time as Modern Fortran with derived
+types, type-bound procedures, submodules and an fpm build. All of SUNDIALS'
+improvements since the split are kept.
+
+For the Fortran predecessor itself, see
+[DVODE](https://github.com/jacobwilliams/dvode), a modernized (Fortran 2008+)
+edition of the original `DVODE`. The two solvers share the same core method, and
+the solver comparison test (`pixi run solver-comparison`) runs them side by side:
+for the same tolerance they use essentially the same number of function
+evaluations.
+
 ### Building
 
 Everything runs through [pixi](https://pixi.sh):
@@ -129,3 +159,12 @@ License. The SUNDIALS license and notice are reproduced in
   Equation Solvers," ACM Trans. Math. Softw. 31(3), 2005.
 * D. J. Gardner et al., "Enabling new flexibility in the SUNDIALS suite of nonlinear
   and differential/algebraic equation solvers," ACM Trans. Math. Softw. 48(3), 2022.
+* Modernized DVODE: https://github.com/jacobwilliams/dvode
+* G. D. Byrne and A. C. Hindmarsh, "A Polyalgorithm for the Numerical Solution of
+  Ordinary Differential Equations," ACM Trans. Math. Softw. 1(1), 1975 (EPISODE).
+* A. C. Hindmarsh, "ODEPACK, A Systematized Collection of ODE Solvers," in
+  *Scientific Computing*, R. S. Stepleman et al. (eds.), North-Holland, 1983 (LSODE).
+* P. N. Brown, G. D. Byrne and A. C. Hindmarsh, "VODE: A Variable-Coefficient ODE
+  Solver," SIAM J. Sci. Stat. Comput. 10(5), 1989.
+* S. D. Cohen and A. C. Hindmarsh, "CVODE, a Stiff/Nonstiff ODE Solver in C,"
+  Computers in Physics 10(2), 1996.
