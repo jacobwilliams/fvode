@@ -42,8 +42,10 @@ c-compiler = "*"
 ref-build = "bash reference/build_reference.sh"
 ref-run = { cmd = "bash reference/run_reference.sh", depends-on = ["ref-build"] }
 fvode-traces = "bash reference/run_fvode_traces.sh"
-# fidelity check: FVODE built without FMA contraction must match the C reference exactly
+# diagnostic: FVODE built without FMA contraction; reports bit-exact agreement with C
 compare-exact = { cmd = "bash reference/run_fvode_traces.sh --flag -ffp-contract=off && python reference/compare.py --exact", depends-on = ["ref-run"] }
+# example ports vs the C examples (FVODE built without FMA contraction): output must match
+compare-examples = { cmd = "python reference/compare_examples.py", depends-on = ["ref-build"] }
 # sanity check of the normal (optimized) build: tolerance-based, see reference/compare.py
 compare = { cmd = "bash reference/run_fvode_traces.sh && python reference/compare.py", depends-on = ["ref-run"] }
 

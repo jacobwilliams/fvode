@@ -1,0 +1,240 @@
+!*****************************************************************************************
+!>
+!  Newton nonlinear solver (SUNDIALS v7.9.0 `SUNNonlinSol_Newton`).
+!
+!  Translated from `src/sunnonlinsol/newton/sunnonlinsol_newton.c`. The
+!  optional stiffness-ratio computation (used only by the "auto" switching
+!  solver) is not included.
+
+    module fvode_nonlinsol_newton
+
+    use fvode_kinds, only: wp, li
+    use fvode_parameters, only: SUNNONLINEARSOLVER_ROOTFIND, SUN_SUCCESS, &
+                                SUN_NLS_SWITCH, SUN_NLS_CONTINUE, SUN_NLS_CONV_RECVR, &
+                                SUN_ERR_ARG_OUTOFRANGE, SUN_ERR_ARG_CORRUPT
+    use fvode_nonlinsol, only: sun_nonlinear_solver, nls_problem
+
+    implicit none
+
+    private
+
+    type,extends(sun_nonlinear_solver),public :: sun_nonlinsol_newton
+        !! Newton iteration (`SUNNonlinearSolverContent_Newton`).
+        private
+        logical :: jcur = .false.      !! Jacobian status, current = true / stale = false
+        integer :: curiter = 0         !! current iteration number in a solve
+        integer :: maxiters = 3        !! maximum iterations per solve
+        integer(li) :: niters = 0      !! total iterations in the last solve
+        integer(li) :: nconvfails = 0  !! convergence failures in the last solve
+        real(wp),dimension(:),allocatable :: delta  !! Newton update vector
+    contains
+        procedure :: get_type           => newton_get_type
+        procedure :: initialize         => newton_initialize
+        procedure :: solve              => newton_solve
+        procedure :: set_max_iters      => newton_set_max_iters
+        procedure :: get_num_iters      => newton_get_num_iters
+        procedure :: get_cur_iter       => newton_get_cur_iter
+        procedure :: get_num_conv_fails => newton_get_num_conv_fails
+    end type sun_nonlinsol_newton
+
+    interface sun_nonlinsol_newton
+        module procedure newton_create
+    end interface sun_nonlinsol_newton
+
+    contains
+!*****************************************************************************************
+
+    function newton_create(n) result(nls)
+    !! `SUNNonlinSol_Newton(y)` for vectors of length n.
+    integer,intent(in) :: n
+    type(sun_nonlinsol_newton) :: nls
+    allocate(nls%delta(n))
+    end function newton_create
+
+    function newton_get_type(me) result(itype)
+    class(sun_nonlinsol_newton),intent(in) :: me
+    integer :: itype
+    itype = SUNNONLINEARSOLVER_ROOTFIND
+    end function newton_get_type
+
+!*****************************************************************************************
+!>
+!  `SUNNonlinSolInitialize_Newton`: reset counters. Fails if no linear solve
+!  function is attached (C asserts this in debug builds).
+
+    function newton_initialize(me) result(flag)
+
+    class(sun_nonlinsol_newton),intent(inout) :: me
+    integer :: flag
+
+    if (.not. me%has_lsolve) then
+        flag = SUN_ERR_ARG_CORRUPT
+        return
+    end if
+
+    me%niters     = 0
+    me%nconvfails = 0
+    me%jcur       = .false.
+    flag = SUN_SUCCESS
+
+    end function newton_initialize
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `SUNNonlinSolSolve_Newton`: Newton iteration for the correction `ycor`.
+!
+!  Each iteration solves `J delta = -F(ycor)` and updates `ycor += delta`.
+!  On a recoverable failure with a stale Jacobian, the linear solver is set
+!  up again (with `jbad = .true.`) and the iteration restarts from zero.
+
+    function newton_solve(me, prob, y0, ycor, w, tol, call_lsetup) result(flag)
+
+    class(sun_nonlinsol_newton),intent(inout) :: me
+    class(nls_problem),intent(inout) :: prob
+    real(wp),dimension(:),intent(in) :: y0      !! unused (as in C)
+    real(wp),dimension(:),intent(inout) :: ycor
+    real(wp),dimension(:),intent(in) :: w
+    real(wp),intent(in) :: tol
+    logical,intent(in) :: call_lsetup
+    integer :: flag
+
+    integer :: retval
+    logical :: jbad, callLSetup
+
+    if (call_lsetup .and. .not. me%has_lsetup) then
+        flag = SUN_ERR_ARG_CORRUPT
+        return
+    end if
+
+    callLSetup = call_lsetup
+
+    ! assume the Jacobian is good
+    jbad = .false.
+
+    ! initialize counter
+    me%niters     = 0
+    me%nconvfails = 0
+
+    ! looping point for attempts at solution of the nonlinear system:
+    !   evaluate the nonlinear residual function (store in delta),
+    !   setup the linear solver if necessary,
+    !   perform Newton iteration
+    setup_loop: do
+
+        ! compute the nonlinear residual, store in delta
+        me%curiter = 0
+        retval = prob%nls_sys(ycor, me%delta)
+        if (retval /= SUN_SUCCESS) exit setup_loop
+
+        ! if indicated, setup the linear system
+        if (callLSetup) then
+            retval = prob%nls_lsetup(jbad, me%jcur)
+            if (retval /= SUN_SUCCESS) exit setup_loop
+        end if
+
+        ! looping point for Newton iteration. Break out on any error.
+        newton_loop: do
+
+            ! increment nonlinear solver iteration counter
+            me%niters = me%niters + 1
+
+            ! compute the negative of the residual for the linear system rhs
+            me%delta = -me%delta
+
+            ! solve the linear system to get Newton update delta
+            retval = prob%nls_lsolve(me%delta)
+            if (retval /= SUN_SUCCESS) exit newton_loop
+
+            ! update the Newton iterate
+            ycor = ycor + me%delta
+
+            ! test for convergence
+            retval = prob%nls_convtest(me, ycor, me%delta, tol, w)
+
+            ! update here to keep curiter correct for the convergence test
+            me%curiter = me%curiter + 1
+
+            ! if successful update Jacobian status and return
+            if (retval == SUN_SUCCESS) then
+                me%jcur = .false.
+                flag = SUN_SUCCESS
+                return
+            else if (retval == SUN_NLS_SWITCH) then
+                flag = SUN_NLS_SWITCH
+                return
+            end if
+
+            ! check if the iteration should continue; otherwise exit Newton loop
+            if (retval /= SUN_NLS_CONTINUE) exit newton_loop
+
+            ! not yet converged. Increment curiter and test for max allowed.
+            if (me%curiter >= me%maxiters) then
+                retval = SUN_NLS_CONV_RECVR
+                exit newton_loop
+            end if
+
+            ! compute the nonlinear residual, store in delta
+            retval = prob%nls_sys(ycor, me%delta)
+            if (retval /= SUN_SUCCESS) exit newton_loop
+
+        end do newton_loop
+
+        ! If there is a recoverable convergence failure and the Jacobian-related
+        ! data appears not to be current, increment the convergence failure count,
+        ! reset the initial correction to zero, and loop again with a call to
+        ! lsetup in which jbad is TRUE. Otherwise break out and return.
+        if ((retval > 0) .and. (.not. me%jcur) .and. me%has_lsetup) then
+            me%nconvfails = me%nconvfails + 1
+            callLSetup = .true.
+            jbad = .true.
+            ycor = 0.0_wp
+            cycle setup_loop
+        else
+            exit setup_loop
+        end if
+
+    end do setup_loop
+
+    ! increment number of convergence failures
+    me%nconvfails = me%nconvfails + 1
+
+    ! all errors go here
+    flag = retval
+
+    end function newton_solve
+!*****************************************************************************************
+
+    function newton_set_max_iters(me, maxiters) result(flag)
+    !! `SUNNonlinSolSetMaxIters_Newton` (`maxiters >= 1`)
+    class(sun_nonlinsol_newton),intent(inout) :: me
+    integer,intent(in) :: maxiters
+    integer :: flag
+    if (maxiters < 1) then
+        flag = SUN_ERR_ARG_OUTOFRANGE
+        return
+    end if
+    me%maxiters = maxiters
+    flag = SUN_SUCCESS
+    end function newton_set_max_iters
+
+    function newton_get_num_iters(me) result(val)
+    class(sun_nonlinsol_newton),intent(in) :: me
+    integer(li) :: val
+    val = me%niters
+    end function newton_get_num_iters
+
+    function newton_get_cur_iter(me) result(val)
+    class(sun_nonlinsol_newton),intent(in) :: me
+    integer :: val
+    val = me%curiter
+    end function newton_get_cur_iter
+
+    function newton_get_num_conv_fails(me) result(val)
+    class(sun_nonlinsol_newton),intent(in) :: me
+    integer(li) :: val
+    val = me%nconvfails
+    end function newton_get_num_conv_fails
+
+    end module fvode_nonlinsol_newton
+!*****************************************************************************************

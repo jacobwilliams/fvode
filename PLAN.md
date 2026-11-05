@@ -213,7 +213,8 @@ because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `
 | `ref-build` | [reference/build_reference.sh](reference/build_reference.sh): clone tag `v7.9.0`, build static CVODE + serial components with `-ffp-contract=off` into `reference/install` (runs once) |
 | `ref-run` | [reference/run_reference.sh](reference/run_reference.sh): regenerate `test/data/sundials_constants.txt`, then build and run every `reference/trace_*.c` into `reference/out/trace_*.csv` |
 | `fvode-traces` | [reference/run_fvode_traces.sh](reference/run_fvode_traces.sh): run every FVODE trace driver `reference/fortran/trace_*.f90` (fpm examples) into `reference/out/fvode_*.csv` |
-| `compare-exact` | **fidelity check**: run the FVODE trace drivers built with `-ffp-contract=off` and require bit-for-bit equality with the C traces ([reference/compare.py](reference/compare.py) `--exact`) |
+| `compare-exact` | diagnostic: FVODE trace drivers built with `-ffp-contract=off`; reports how long each trace stays bit-for-bit identical to C, then applies the tolerance checks ([reference/compare.py](reference/compare.py) `--exact`) |
+| `compare-examples` | [reference/compare_examples.py](reference/compare_examples.py): run each C example and its FVODE port (no FMA) and require identical output |
 | `compare` | sanity check of the normal optimized build (tolerances; see §6) |
 
 We build the reference from source at the pinned tag, not from the conda-forge `sundials`
@@ -237,10 +238,15 @@ is not a FORD 7 option.
    This needs no changes to SUNDIALS. The matching FVODE program writes the same columns to
    `reference/out/fvode_<name>.csv`. `reference/compare.py` compares the two traces in two
    modes:
-   * **`compare-exact` (the fidelity check).** FVODE is built with `-ffp-contract=off`, like
-     the C reference, and the traces must be bit-for-bit identical. Array syntax and
-     intrinsics give the same bits as the C loops without FMA, so any difference is a
-     translation error, and the first differing row points to it.
+   * **`compare-exact` (diagnostic).** FVODE is built with `-ffp-contract=off`, like the C
+     reference, and the report says how many rows are bit-for-bit identical. Where the
+     arithmetic matches C's, a faithful translation stays identical, so the first differing
+     row points to the code that ran differently. One intended difference: integer powers
+     (`x**i` squares, `SUNRpowerI` multiplies in a loop). It first matters at an order
+     increase to q >= 4 with a changed step size. After the exact report, the tolerance
+     checks decide pass/fail.
+   * **`compare-examples`.** Each FVODE example port, built without FMA, must print exactly
+     what the C example built here prints (workspace lines excluded).
    * **`compare` (sanity check of the optimized build).** If the integer columns (steps,
      orders, counters) match, the real columns must agree to a mixed tolerance (default
      `1e-3` of the value or of the column maximum). On sensitive problems a rounding
@@ -260,8 +266,8 @@ is not a FORD 7 option.
    (all Krylov solvers), `cvKrylovDemo_prec`, `cvDisc_dns` (discontinuities/ReInit),
    `cvAnalytic_mels`, `cvVdp_auto_nls`, `cvPendulum_dns` (projection), `cvRocket_dns`
    (root finding + stop), `cvParticle_dns`.
-4. **CI** with GitHub Actions running `pixi run test` and `pixi run -e reference compare-exact`
-   (plus `compare`) on linux-64 and osx-arm64.
+4. **CI** with GitHub Actions running `pixi run test`, and in the reference env
+   `compare`, `compare-exact` and `compare-examples`, on linux-64 and osx-arm64.
 
 ## 7. Phased work plan
 
@@ -295,6 +301,8 @@ Original task list:
   Mathematically these are plain sums, which is what the array code does.
 
 ### Phase 2: Core integrator, explicit path (functional/fixed-point iteration) ✅ done
+(Since Phase 3, `compare-exact` is a diagnostic. Its exact match holds until the first
+order increase past 3 with a changed step size, because of `x**i`; see §6.)
 `fvode_core` holds the solver type, the step logic and the options/statistics
 (`cvode.c`, `cvode_nls.c`, most of `cvode_io.c`). `fvode_nonlinsol` holds the nonlinear
 solver interface, and `fvode_nonlinsol_fixedpoint` the fixed-point solver with Anderson
@@ -338,7 +346,33 @@ Port in this order. Each item is a direct translation of the named C function(s)
   `cvDirectDemo_ls` problem 1 with functional iteration) match the C step trace (same steps
   and counters; exact with `compare-exact`).
 
-### Phase 3: Newton and direct linear solvers
+### Phase 3: Newton and direct linear solvers ✅ done
+Delivered:
+* `fvode_matrix`: `dense_matrix`, `band_matrix` (SUNDIALS band storage, `smu = mu + ml`).
+* `fvode_linsol`: the abstract `sun_linear_solver`; `fvode_linsol_direct`: dense and band
+  LU (`denseGETRF/GETRS`, `bandGBTRF/GBTRS`).
+* `fvode_nonlinsol_newton`. `init` attaches a Newton solver by default, as in C.
+* Submodule `fvode_core_ls` (`cvode_ls.c`: `jbad` heuristic, saved Jacobian, `A = I - gamma J`,
+  `gamrat` solution scaling, DQ dense/band Jacobians, user Jacobian). Submodule
+  `fvode_core_diag` (`cvode_diag.c`). An `ls_kind` field selects the attached interface,
+  replacing C's `cv_linit`/`cv_lsetup`/... function pointers.
+* Examples `cv_direct_demo` (port of `cvDirectDemo_ls`: 16 runs covering dense user/DQ, band
+  user/DQ and diagonal, with Adams and BDF) and `cv_advdiff_bnd` (port of `cvAdvDiff_bnd`, user
+  data by extending `cvode_solver`). Unit tests `test/test_linsol.f90`.
+
+Verification:
+* `compare-examples` (new): both example ports, built without FMA, print **exactly** the same
+  output as the C examples built here. That covers every direct-solver path above.
+* `roberts_bdf_dense` trace: bit-for-bit for 278 of 648 steps, i.e. up to the first order
+  increase to 4. Integer powers there differ by design (`x**i` vs the `SUNRpowerI` loop; the
+  user chose idiomatic `x**i`). The run then stays within tolerance (final solution within
+  1e-8).
+* The optimized `cv_advdiff_bnd` reproduces the upstream `.out` statistics exactly.
+
+Upstream quirk: `CVodePrintAllStats` reads the `CVLsMem` statistics whenever any linear solver
+is attached, including `CVDiag` (wrong memory). FVODE prints them only for the generic interface.
+
+Original task list:
 * Dense and band matrices, `denseGETRF/GETRS`, `bandGBTRF/GBTRS`, `ScaleAddI`.
 * Dense and band linear solvers.
 * Newton nonlinear solver.

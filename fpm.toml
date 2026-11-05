@@ -60,3 +60,8 @@ main = "trace_vdp_adams_aa_damped.f90"
 name = "trace_analytic_fp"
 source-dir = "reference/fortran"
 main = "trace_analytic_fp.f90"
+
+[[example]]
+name = "trace_roberts_bdf_dense"
+source-dir = "reference/fortran"
+main = "trace_roberts_bdf_dense.f90"

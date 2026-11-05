@@ -18,12 +18,14 @@
 !  Arrays keep the C index ranges: `zn(:,0:qmax)`, `l(0:L_MAX-1)`,
 !  `tau(0:L_MAX)` (`tau(1..q+1)` used), `tq(1:NUM_TESTS)`.
 !
+!  The linear solver interface (`cvode_ls.c`) is in the submodule
+!  `fvode_core_ls`.
+!
 !### Not yet ported
 !
-!  Linear solvers (and so the default Newton iteration), root finding,
-!  inequality constraints, projection, stability limit detection, history
-!  resizing and Anderson acceleration. The places where the C code handles
-!  them are marked `! [not yet ported]`.
+!  Iterative linear solvers and preconditioning, root finding, inequality
+!  constraints, projection, stability limit detection and history resizing.
+!  The places where the C code handles them are marked `! [not yet ported]`.
 
     module fvode_core
 
@@ -31,12 +33,20 @@
     use fvode_kinds, only: wp, ip, li
     use fvode_parameters
     use fvode_internal_parameters
-    use fvode_nvector, only: n_vwrmsnorm
+    use fvode_nvector, only: n_vwrmsnorm, n_vinvtest
     use fvode_nonlinsol, only: sun_nonlinear_solver, nls_problem
+    use fvode_nonlinsol_newton, only: sun_nonlinsol_newton
+    use fvode_matrix, only: sun_matrix, dense_matrix, band_matrix, SUNMATRIX_DENSE, SUNMATRIX_BAND
+    use fvode_linsol, only: sun_linear_solver
 
     implicit none
 
     private
+
+    ! which linear solver interface is attached (C: cv_linit, cv_lsetup, ... pointers)
+    integer,parameter :: LS_NONE    = 0  !! none
+    integer,parameter :: LS_GENERIC = 1  !! SUNLinearSolver interface (cvode_ls.c)
+    integer,parameter :: LS_DIAG    = 2  !! diagonal approximate Jacobian (cvode_diag.c)
 
     type,extends(nls_problem),public :: cvode_solver
         !! CVODE solver (`CVodeMemRec`).
@@ -144,10 +154,47 @@
         class(sun_nonlinear_solver),allocatable :: NLS  !! nonlinear solver
         integer :: convfail = CV_NO_FAILURES            !! for the linear solver setup
 
-        !---- linear solver  [not yet ported]
+        !---- linear solver (C: cv_linit, cv_lsetup, ... and cv_lmem)
+        integer :: ls_kind = LS_NONE        !! which interface: LS_NONE, LS_GENERIC, LS_DIAG
         logical :: lsetup_exists = .false.  !! C: cv_lsetup != NULL
+        logical :: lsolve_exists = .false.  !! C: cv_lsolve != NULL
         integer(li) :: msbp = MSBP_DEFAULT  !! max steps between lsetup calls
         real(wp) :: dgmax_lsetup = DGMAX_LSETUP_DEFAULT !! gamma ratio threshold for lsetup
+
+        !---- linear solver interface memory (CVLsMemRec, cvode_ls_impl.h)
+        logical :: ls_iterative = .false.    !! is the solver iterative?
+        logical :: ls_matrixbased = .false.  !! is a matrix structure used?
+        logical :: jacDQ = .false.           !! use the internal DQ Jacobian
+        procedure(cv_jac_fn),pointer,nopass :: jac_user => null()  !! user Jacobian
+        logical :: jbad = .true.             !! heuristic suggestion for pset
+        real(wp) :: dgmax_jbad = CVLS_DGMAX  !! |gamma/gammap-1| < dgmax_jbad: J is bad
+        logical :: scalesol = .false.        !! scale the solution for a change in gamma
+        real(wp) :: eplifac = CVLS_EPLIN     !! nonlinear -> linear tolerance factor
+        real(wp) :: nrmfac = ONE             !! integrator -> LS norm conversion factor
+        class(sun_linear_solver),allocatable :: LS  !! linear solver
+        class(sun_matrix),allocatable :: A          !! A = I - gamma * df/dy
+        class(sun_matrix),allocatable :: savedJ     !! saved Jacobian
+        real(wp),dimension(:),allocatable :: ls_ytemp !! temporary (jtimes, psolve)
+        real(wp),dimension(:),allocatable :: ls_x     !! solution of the linear solve
+        integer(li) :: msbj = CVLS_MSBJ      !! max steps between Jacobian evaluations
+        integer(li) :: nje = 0               !! number of Jacobian evaluations
+        integer(li) :: nfeDQ = 0             !! f evaluations for DQ Jacobian / J*v
+        integer(li) :: nstlj = 0             !! nst at the last Jacobian evaluation
+        integer(li) :: npe = 0               !! preconditioner setups
+        integer(li) :: nli = 0               !! linear iterations
+        integer(li) :: nps = 0               !! preconditioner solves
+        integer(li) :: ncfl = 0              !! linear convergence failures
+        integer(li) :: njtsetup = 0          !! J*v setup calls
+        integer(li) :: njtimes = 0           !! J*v calls
+        real(wp) :: tnlj = ZERO              !! tn at the last Jacobian evaluation
+        integer :: ls_last_flag = CVLS_SUCCESS !! last flag from a linear solver function
+
+        !---- diagonal linear solver (CVDiagMemRec, cvode_diag_impl.h)
+        real(wp) :: di_gammasv = ZERO              !! gamma at the last call to setup
+        real(wp),dimension(:),allocatable :: di_M  !! M = (I - gamma J)^{-1}
+        real(wp),dimension(:),allocatable :: di_bit, di_bitcomp  !! temporary storage
+        integer(li) :: di_nfeDI = 0                !! f evaluations for the diagonal J
+        integer :: di_last_flag = CVDIAG_SUCCESS   !! last error flag
 
         !---- saved values
         integer :: qu = 0            !! last successful q
@@ -245,6 +292,27 @@
         procedure,public :: get_nonlin_solv_stats => CVodeGetNonlinSolvStats
         procedure,public :: print_all_stats     => CVodePrintAllStats
 
+        ! linear solver interface (cvode_ls.c, submodule fvode_core_ls)
+        procedure,public :: set_linear_solver   => CVodeSetLinearSolver
+        procedure,public :: set_jac_fn          => CVodeSetJacFn
+        procedure,public :: set_jac_eval_frequency => CVodeSetJacEvalFrequency
+        procedure,public :: set_linear_solution_scaling => CVodeSetLinearSolutionScaling
+        procedure,public :: set_delta_gamma_max_bad_jac => CVodeSetDeltaGammaMaxBadJac
+        procedure,public :: get_num_jac_evals   => CVodeGetNumJacEvals
+        procedure,public :: get_num_lin_rhs_evals => CVodeGetNumLinRhsEvals
+        procedure,public :: get_num_lin_iters   => CVodeGetNumLinIters
+        procedure,public :: get_num_lin_conv_fails => CVodeGetNumLinConvFails
+        procedure,public :: get_num_prec_evals  => CVodeGetNumPrecEvals
+        procedure,public :: get_num_prec_solves => CVodeGetNumPrecSolves
+        procedure,public :: get_last_lin_flag   => CVodeGetLastLinFlag
+        procedure,public :: get_jac_time        => CVodeGetJacTime
+        procedure,public :: get_jac_num_steps   => CVodeGetJacNumSteps
+
+        ! diagonal linear solver (cvode_diag.c, submodule fvode_core_diag)
+        procedure,public :: diag                => CVDiag
+        procedure,public :: get_diag_num_rhs_evals => CVDiagGetNumRhsEvals
+        procedure,public :: get_diag_last_flag  => CVDiagGetLastFlag
+
         ! nonlinear solver interface (cvode_nls.c)
         procedure :: nls_sys      => cvNlsSys
         procedure :: nls_lsetup   => cvNlsLSetup
@@ -279,9 +347,125 @@
             integer :: retval
         end function cv_ewt_fn
 
+        function cv_jac_fn(me, t, y, fy, J, tmp1, tmp2, tmp3) result(retval)
+            !! User Jacobian function (`CVLsJacFn`): fill `J = df/dy` at (t, y);
+            !! `fy = f(t, y)`. J is the matrix given to `set_linear_solver`
+            !! (use `select type` to access its data). Return 0 on success,
+            !! > 0 for a recoverable error, < 0 for an unrecoverable error.
+            import :: cvode_solver, sun_matrix, wp
+            implicit none
+            class(cvode_solver),intent(inout) :: me
+            real(wp),intent(in) :: t
+            real(wp),dimension(:),intent(in) :: y
+            real(wp),dimension(:),intent(in) :: fy
+            class(sun_matrix),intent(inout) :: J
+            real(wp),dimension(:),intent(inout) :: tmp1, tmp2, tmp3
+            integer :: retval
+        end function cv_jac_fn
+
     end interface
 
-    public :: cv_rhs_fn, cv_ewt_fn
+    public :: cv_rhs_fn, cv_ewt_fn, cv_jac_fn
+
+    !-------------------------------------------------------------------------------------
+    ! linear solver interface: implemented in submodule fvode_core_ls (cvode_ls.c)
+    !-------------------------------------------------------------------------------------
+    interface
+
+        module subroutine CVodeSetLinearSolver(me, LS, A, flag)
+            class(cvode_solver),intent(inout) :: me
+            class(sun_linear_solver),intent(in) :: LS
+            class(sun_matrix),intent(in),optional :: A
+            integer,intent(out) :: flag
+        end subroutine CVodeSetLinearSolver
+
+        module subroutine CVodeSetJacFn(me, jac, flag)
+            class(cvode_solver),intent(inout) :: me
+            procedure(cv_jac_fn),optional :: jac
+            integer,intent(out) :: flag
+        end subroutine CVodeSetJacFn
+
+        module subroutine CVodeSetJacEvalFrequency(me, msbj, flag)
+            class(cvode_solver),intent(inout) :: me
+            integer(li),intent(in) :: msbj
+            integer,intent(out) :: flag
+        end subroutine CVodeSetJacEvalFrequency
+
+        module subroutine CVodeSetLinearSolutionScaling(me, onoff, flag)
+            class(cvode_solver),intent(inout) :: me
+            logical,intent(in) :: onoff
+            integer,intent(out) :: flag
+        end subroutine CVodeSetLinearSolutionScaling
+
+        module subroutine CVodeSetDeltaGammaMaxBadJac(me, dgmax_jbad, flag)
+            class(cvode_solver),intent(inout) :: me
+            real(wp),intent(in) :: dgmax_jbad
+            integer,intent(out) :: flag
+        end subroutine CVodeSetDeltaGammaMaxBadJac
+
+        module function cvLsInitialize(me) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            integer :: flag
+        end function cvLsInitialize
+
+        module function cvLsReInitialize(me) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            integer :: flag
+        end function cvLsReInitialize
+
+        module function cvLsSetup(me, convfail, ypred, fpred, jcur) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            integer,intent(in) :: convfail
+            real(wp),dimension(:),intent(in) :: ypred
+            real(wp),dimension(:),intent(in) :: fpred
+            logical,intent(out) :: jcur
+            integer :: flag
+        end function cvLsSetup
+
+        module function cvLsSolve(me, b, weight, ynow, fnow) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            real(wp),dimension(:),intent(inout) :: b
+            real(wp),dimension(:),intent(in) :: weight
+            real(wp),dimension(:),intent(in) :: ynow
+            real(wp),dimension(:),intent(in) :: fnow
+            integer :: flag
+        end function cvLsSolve
+
+        module subroutine cvLsFree(me)
+            class(cvode_solver),intent(inout) :: me
+        end subroutine cvLsFree
+
+        ! diagonal linear solver: submodule fvode_core_diag (cvode_diag.c)
+
+        module subroutine CVDiag(me, flag)
+            class(cvode_solver),intent(inout) :: me
+            integer,intent(out) :: flag
+        end subroutine CVDiag
+
+        module function CVDiagInit(me) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            integer :: flag
+        end function CVDiagInit
+
+        module function CVDiagSetup(me, ypred, fpred, jcur) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            real(wp),dimension(:),intent(in) :: ypred
+            real(wp),dimension(:),intent(in) :: fpred
+            logical,intent(out) :: jcur
+            integer :: flag
+        end function CVDiagSetup
+
+        module function CVDiagSolve(me, b) result(flag)
+            class(cvode_solver),intent(inout) :: me
+            real(wp),dimension(:),intent(inout) :: b
+            integer :: flag
+        end function CVDiagSolve
+
+        module subroutine CVDiagFree(me)
+            class(cvode_solver),intent(inout) :: me
+        end subroutine CVDiagFree
+
+    end interface
     public :: CVodeGetReturnFlagName
 
     contains
@@ -405,7 +589,14 @@
     ! initialize zn[0] in the history array
     me%zn(:,0) = y0
 
-    ! [not yet ported] create and attach the default Newton solver
+    ! create a Newton nonlinear solver object and attach it to CVode
+    call CVodeSetNonlinearSolverInternal(me, sun_nonlinsol_newton(int(me%n)), flag)
+    if (flag /= CV_SUCCESS) then
+        call cvProcessError(me, flag, 'CVodeInit', 'Setting the nonlinear solver failed')
+        call cvFreeVectors(me)
+        flag = CV_MEM_FAIL
+        return
+    end if
 
     ! initialize all the counters and other optional output values
     me%q      = 1
@@ -418,7 +609,8 @@
     me%tolsf = ONE
 
     ! set the linear solver addresses to NULL
-    me%lsetup_exists = .false.
+    ! (we check != NULL later, in CVode)
+    call cvLFree(me)
 
     ! initialize all the counters
     me%nst     = 0
@@ -512,7 +704,12 @@
 
     me%irfnd = 0
 
-    ! [not yet ported] constraint counters, linear solver reinit
+    ! [not yet ported] constraint counters
+
+    select case (me%ls_kind)
+    case (LS_GENERIC); flag = cvLsReInitialize(me)
+    case (LS_DIAG);    flag = CVDiagInit(me)
+    end select
 
     ! initialize other integrator optional outputs
     me%h0u    = ZERO
@@ -1097,6 +1294,7 @@
 
     call cvFreeVectors(me)
     if (allocated(me%NLS)) deallocate(me%NLS)
+    call cvLFree(me)
     me%MallocDone = .false.
     me%f => null()
     me%efun_user => null()
@@ -1107,6 +1305,25 @@
 !=========================================================================================
 !  Private helper functions (cvode.c)
 !=========================================================================================
+
+!*****************************************************************************************
+!>
+!  `cv_mem->cv_lfree(cv_mem)`: free the attached linear solver interface.
+
+    subroutine cvLFree(me)
+
+    class(cvode_solver),intent(inout) :: me
+
+    select case (me%ls_kind)
+    case (LS_GENERIC); call cvLsFree(me)
+    case (LS_DIAG);    call CVDiagFree(me)
+    end select
+    me%ls_kind       = LS_NONE
+    me%lsetup_exists = .false.
+    me%lsolve_exists = .false.
+
+    end subroutine cvLFree
+!*****************************************************************************************
 
 !*****************************************************************************************
 !>
@@ -1204,7 +1421,19 @@
         return
     end if
 
-    ! [not yet ported] call linit function (if it exists)
+    ! call linit function (if it exists)
+    if (me%ls_kind /= LS_NONE) then
+        select case (me%ls_kind)
+        case (LS_GENERIC); ier = cvLsInitialize(me)
+        case (LS_DIAG);    ier = CVDiagInit(me)
+        end select
+        if (ier /= 0) then
+            call cvProcessError(me, CV_LINIT_FAIL, 'cvInitialSetup', &
+                                "The linear solver's init routine failed.")
+            flag = CV_LINIT_FAIL
+            return
+        end if
+    end if
 
     ! initialize the nonlinear solver (must occur after linear solver is
     ! initialized) so that lsetup and lsolve pointer have been set
@@ -1409,7 +1638,7 @@
         return
     end if
 
-    me%tempv = (ONE / hg)*me%tempv + (-ONE / hg)*me%zn(:,1)
+    me%tempv = (ONE / hg) * (me%tempv - me%zn(:,1))
 
     yddnrm = n_vwrmsnorm(me%tempv, me%ewt)
 
@@ -2708,14 +2937,30 @@
     class(sun_nonlinear_solver),intent(in) :: NLS
     integer,intent(out) :: flag
 
-    integer :: retval, itype
-
     if (.not. me%MallocDone) then
         call cvProcessError(me, CV_NO_MALLOC, 'CVodeSetNonlinearSolver', &
                             'Attempt to call before CVodeInit.')
         flag = CV_NO_MALLOC
         return
     end if
+
+    call CVodeSetNonlinearSolverInternal(me, NLS, flag)
+
+    end subroutine CVodeSetNonlinearSolver
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  The body of `CVodeSetNonlinearSolver` (also used by `CVodeInit` to attach
+!  the default Newton solver).
+
+    subroutine CVodeSetNonlinearSolverInternal(me, NLS, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    class(sun_nonlinear_solver),intent(in) :: NLS
+    integer,intent(out) :: flag
+
+    integer :: retval, itype
 
     itype = NLS%get_type()
     if (itype /= SUNNONLINEARSOLVER_ROOTFIND .and. &
@@ -2746,7 +2991,7 @@
 
     flag = CV_SUCCESS
 
-    end subroutine CVodeSetNonlinearSolver
+    end subroutine CVodeSetNonlinearSolverInternal
 !*****************************************************************************************
 
 !*****************************************************************************************
@@ -2761,17 +3006,9 @@
 
     integer :: retval
 
-    if (.not. allocated(me%NLS)) then
-        ! [not yet ported] C attaches a default Newton solver in CVodeInit
-        call cvProcessError(me, CV_NLS_INIT_FAIL, 'cvNlsInit', &
-            'No nonlinear solver attached (the default Newton solver is not ported yet).')
-        flag = CV_NLS_INIT_FAIL
-        return
-    end if
-
     ! set the linear solver setup / solve wrappers (if they exist)
     me%NLS%has_lsetup = me%lsetup_exists
-    me%NLS%has_lsolve = me%lsetup_exists
+    me%NLS%has_lsolve = me%lsolve_exists
 
     ! initialize nonlinear solver
     retval = me%NLS%initialize()
@@ -2884,7 +3121,7 @@
 
 !*****************************************************************************************
 !>
-!  `cvNlsLSetup`  [not yet ported: linear solvers]
+!  `cvNlsLSetup`: set up the linear solver for the Newton iteration.
 
     function cvNlsLSetup(me, jbad, jcur) result(flag)
 
@@ -2893,18 +3130,42 @@
     logical,intent(out) :: jcur
     integer :: flag
 
+    integer :: retval
+
     ! if the nonlinear solver marked the Jacobian as bad update convfail
     if (jbad) me%convfail = CV_FAIL_BAD_J
 
+    ! setup the linear system
+    select case (me%ls_kind)
+    case (LS_GENERIC); retval = cvLsSetup(me, me%convfail, me%y, me%ftemp, me%jcur)
+    case (LS_DIAG);    retval = CVDiagSetup(me, me%y, me%ftemp, me%jcur)
+    case default;      retval = -1
+    end select
+    me%nsetups = me%nsetups + 1
+
+    ! update Jacobian status
     jcur = me%jcur
-    flag = CV_LSETUP_FAIL   ! no linear solver yet
+
+    me%gamrat = ONE
+    me%gammap = me%gamma
+    me%crate  = ONE
+    me%delnrm = ZERO
+    me%nstlp  = me%nst
+
+    if (retval < 0) then
+        flag = CV_LSETUP_FAIL
+    else if (retval > 0) then
+        flag = SUN_NLS_CONV_RECVR
+    else
+        flag = CV_SUCCESS
+    end if
 
     end function cvNlsLSetup
 !*****************************************************************************************
 
 !*****************************************************************************************
 !>
-!  `cvNlsLSolve`  [not yet ported: linear solvers]
+!  `cvNlsLSolve`: solve the linear system for the Newton update (in place).
 
     function cvNlsLSolve(me, b) result(flag)
 
@@ -2912,8 +3173,21 @@
     real(wp),dimension(:),intent(inout) :: b
     integer :: flag
 
-    if (size(b) < 0) flag = 0   ! (unused)
-    flag = CV_LSOLVE_FAIL   ! no linear solver yet
+    integer :: retval
+
+    select case (me%ls_kind)
+    case (LS_GENERIC); retval = cvLsSolve(me, b, me%ewt, me%y, me%ftemp)
+    case (LS_DIAG);    retval = CVDiagSolve(me, b)
+    case default;      retval = -1
+    end select
+
+    if (retval < 0) then
+        flag = CV_LSOLVE_FAIL
+    else if (retval > 0) then
+        flag = SUN_NLS_CONV_RECVR
+    else
+        flag = CV_SUCCESS
+    end if
 
     end function cvNlsLSolve
 !*****************************************************************************************
@@ -3658,6 +3932,64 @@
     v = me%ncfn
     end function CVodeGetNumStepSolveFails
 
+    pure integer(li) function CVDiagGetNumRhsEvals(me) result(v)
+    !! f evaluations for the diagonal Jacobian approximation
+    class(cvode_solver),intent(in) :: me
+    v = me%di_nfeDI
+    end function CVDiagGetNumRhsEvals
+
+    pure integer function CVDiagGetLastFlag(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%di_last_flag
+    end function CVDiagGetLastFlag
+
+    pure integer(li) function CVodeGetNumJacEvals(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nje
+    end function CVodeGetNumJacEvals
+
+    pure integer(li) function CVodeGetNumLinRhsEvals(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nfeDQ
+    end function CVodeGetNumLinRhsEvals
+
+    pure integer(li) function CVodeGetNumLinIters(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nli
+    end function CVodeGetNumLinIters
+
+    pure integer(li) function CVodeGetNumLinConvFails(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%ncfl
+    end function CVodeGetNumLinConvFails
+
+    pure integer(li) function CVodeGetNumPrecEvals(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%npe
+    end function CVodeGetNumPrecEvals
+
+    pure integer(li) function CVodeGetNumPrecSolves(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nps
+    end function CVodeGetNumPrecSolves
+
+    pure integer function CVodeGetLastLinFlag(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%ls_last_flag
+    end function CVodeGetLastLinFlag
+
+    pure real(wp) function CVodeGetJacTime(me) result(v)
+    !! time at which the Jacobian was last evaluated
+    class(cvode_solver),intent(in) :: me
+    v = me%tnlj
+    end function CVodeGetJacTime
+
+    pure integer(li) function CVodeGetJacNumSteps(me) result(v)
+    !! step number at which the Jacobian was last evaluated
+    class(cvode_solver),intent(in) :: me
+    v = me%nstlj
+    end function CVodeGetJacNumSteps
+
     pure real(wp) function CVodeGetCurrentGamma(me) result(v)
     class(cvode_solver),intent(in) :: me
     v = me%gamma
@@ -3764,7 +4096,23 @@
 
     ! linear solver stats
     call put_long('LS setups', me%nsetups)
-    ! [not yet ported] linear solver interface statistics
+    ! (C reads the CVLsMem statistics whenever a linear solver is attached,
+    ! which is wrong for CVDiag; FVODE prints them only for the generic interface)
+    if (me%ls_kind == LS_GENERIC) then
+        call put_long('Jac fn evals', me%nje)
+        call put_long('LS RHS fn evals', me%nfeDQ)
+        call put_long('Prec setup evals', me%npe)
+        call put_long('Prec solves', me%nps)
+        call put_long('LS iters', me%nli)
+        call put_long('LS fails', me%ncfl)
+        call put_long('Jac-times setups', me%njtsetup)
+        call put_long('Jac-times evals', me%njtimes)
+        if (me%nni > 0) then
+            call put_real('LS iters per NLS iter', real(me%nli, wp) / real(me%nni, wp))
+            call put_real('Jac evals per NLS iter', real(me%nje, wp) / real(me%nni, wp))
+            call put_real('Prec evals per NLS iter', real(me%npe, wp) / real(me%nni, wp))
+        end if
+    end if
 
     ! rootfinding stats
     call put_long('Root fn evals', me%nge)
