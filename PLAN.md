@@ -213,8 +213,8 @@ because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `
 | `ref-build` | [reference/build_reference.sh](reference/build_reference.sh): clone tag `v7.9.0`, build static CVODE + serial components with `-ffp-contract=off` into `reference/install` (runs once) |
 | `ref-run` | [reference/run_reference.sh](reference/run_reference.sh): regenerate `test/data/sundials_constants.txt`, then build and run every `reference/trace_*.c` into `reference/out/trace_*.csv` |
 | `fvode-traces` | [reference/run_fvode_traces.sh](reference/run_fvode_traces.sh): run every FVODE trace driver `reference/fortran/trace_*.f90` (fpm examples) into `reference/out/fvode_*.csv` |
-| `compare` | [reference/compare.py](reference/compare.py): compare `fvode_<name>.csv` with `trace_<name>.csv` (optimized FVODE build, tolerance) |
-| `compare-exact` | same, with FVODE built with `-ffp-contract=off` and an exact comparison (debugging aid) |
+| `compare-exact` | **fidelity check**: run the FVODE trace drivers built with `-ffp-contract=off` and require bit-for-bit equality with the C traces ([reference/compare.py](reference/compare.py) `--exact`) |
+| `compare` | sanity check of the normal optimized build (tolerances; see §6) |
 
 We build the reference from source at the pinned tag, not from the conda-forge `sundials`
 package, so the version matches exactly.
@@ -235,16 +235,24 @@ is not a FORD 7 option.
    [reference/trace_common.h](reference/trace_common.h)):
    `nst,t,hu,qu,hcur,qcur,nfe,nni,nncf,netf,nsetups,njev,nfels,flag,y1..yN`.
    This needs no changes to SUNDIALS. The matching FVODE program writes the same columns to
-   `reference/out/fvode_<name>.csv`. `reference/compare.py` diffs the two traces:
-   * integer columns (`nst`, `q`, counters) must match **exactly**,
-   * real columns must agree to a mixed tolerance (default `1e-3`, relative to the value or
-     to the column's maximum), which allows for rounding drift in the optimized build.
-
-   `compare-exact` is a debugging aid. It builds FVODE with `-ffp-contract=off` (like the C
-   reference) and requires exact equality, so the first differing step points straight to
-   a mistranslated routine.
+   `reference/out/fvode_<name>.csv`. `reference/compare.py` compares the two traces in two
+   modes:
+   * **`compare-exact` (the fidelity check).** FVODE is built with `-ffp-contract=off`, like
+     the C reference, and the traces must be bit-for-bit identical. Array syntax and
+     intrinsics give the same bits as the C loops without FMA, so any difference is a
+     translation error, and the first differing row points to it.
+   * **`compare` (sanity check of the optimized build).** If the integer columns (steps,
+     orders, counters) match, the real columns must agree to a mixed tolerance (default
+     `1e-3` of the value or of the column maximum). On sensitive problems a rounding
+     difference can flip a near-threshold decision, after which the step sequences differ
+     (`analytic_fp` diverges at its second output). That is reported as DIVERGED, not as
+     a failure, if the final solution agrees to `1e-4` of the column scale and the step
+     count differs by at most 10%.
 3. **Example regression.** Port the upstream serial examples and compare against the
-   shipped `.out` files (final stats and solution values):
+   shipped `.out` files. Solution values should agree to the printed digits. Statistics
+   only for problems that aren't rounding-sensitive: for `cv_analytic_fp` the `.out` file
+   reports 2065 steps, the pinned C build here takes 2160, and optimized FVODE 2024,
+   while the exact-mode trace matches the C build bit for bit. Planned examples:
    `cvRoberts_dns` (BDF + Newton + dense, with roots), `cvRoberts_dns_uw` (user `ewt`),
    `cvRoberts_dns_constraints`, `cvRoberts_dns_negsol`, `cvAdvDiff_bnd` (band),
    `cvDirectDemo_ls` (Adams/BDF × functional/dense/band/diag matrix), `cvDiurnal_kry`
@@ -252,8 +260,8 @@ is not a FORD 7 option.
    (all Krylov solvers), `cvKrylovDemo_prec`, `cvDisc_dns` (discontinuities/ReInit),
    `cvAnalytic_mels`, `cvVdp_auto_nls`, `cvPendulum_dns` (projection), `cvRocket_dns`
    (root finding + stop), `cvParticle_dns`.
-4. **CI** with GitHub Actions running `pixi run test` and `pixi run compare` on linux-64 and
-   osx-arm64.
+4. **CI** with GitHub Actions running `pixi run test` and `pixi run -e reference compare-exact`
+   (plus `compare`) on linux-64 and osx-arm64.
 
 ## 7. Phased work plan
 
@@ -286,15 +294,30 @@ Original task list:
   default, so CVODE uses the generic `N_VLinearCombination`/`N_VScaleAddMulti` fallbacks.
   Mathematically these are plain sums, which is what the array code does.
 
-### Phase 2: Core integrator, explicit path (functional/fixed-point iteration) — in progress
-**Status:** items 1–8 done except Anderson acceleration; item 9 partly done (the common
-setters and getters). `fvode_core` holds the solver type and the step logic, and
-`fvode_nonlinsol(_fixedpoint)` holds the nonlinear solver interface. The
-`vdp_adams_fp` trace (217 steps) has the same steps and all counters as C, with real values
-within 2e-4 of the column scale. With `-ffp-contract=off` it is bit-for-bit identical
-(`compare-exact`), which confirms the translation. Places where the C code handles
-not-yet-ported features (linear solvers, roots, constraints, projection, STALD, resize) are
-marked `[not yet ported]`.
+### Phase 2: Core integrator, explicit path (functional/fixed-point iteration) ✅ done
+`fvode_core` holds the solver type, the step logic and the options/statistics
+(`cvode.c`, `cvode_nls.c`, most of `cvode_io.c`). `fvode_nonlinsol` holds the nonlinear
+solver interface, and `fvode_nonlinsol_fixedpoint` the fixed-point solver with Anderson
+acceleration and damping. In v7.9.0 the fixed-point solver does its own QR (modified
+Gram-Schmidt plus Givens downdating); `SUNQRAdd_*` is not used.
+
+Verified with four traces. All are bit-for-bit identical to C in `compare-exact`:
+
+| Trace | Problem | Steps |
+|---|---|---|
+| `vdp_adams_fp` | van der Pol, Adams + fixed point | 217 |
+| `vdp_adams_aa` | same, Anderson m = 2, up to 5 iterations (subspace recycling) | 270 |
+| `vdp_adams_aa_damped` | same, Anderson m = 3, beta = 0.75 | 241 |
+| `analytic_fp` | `cv_analytic_fp` problem, 10 CV_NORMAL outputs | 2160 |
+
+There is also a user example, [example/cv_analytic_fp.f90](example/cv_analytic_fp.f90),
+a port of the SUNDIALS F2003 example, and unit tests `test/test_core.f90` (accuracy,
+`get_dky`, stop time, input checks).
+
+Not yet ported and marked `[not yet ported]` in the code: linear-solver hooks (Phase 3),
+roots/constraints/STALD (Phase 4), projection and history resize (Phase 6). Also left for
+later: `CVodeSetUserData` (replaced by extending the type), monitor functions, and
+`CVodeGetWorkSpace`.
 
 Port in this order. Each item is a direct translation of the named C function(s):
 1. `cvode_solver` type ← `CVodeMemRec`; `create`, `init`, `reinit`, `free` (finalizer).
@@ -309,8 +332,7 @@ Port in this order. Each item is a direct translation of the named C function(s)
 7. Driver: `CVode` (`CV_NORMAL`/`CV_ONE_STEP`, `tstop`, `mxstep`, `hmin/hmax`, warnings),
    `CVodeGetDky`.
 8. `fvode_nls` (`cvNls`, `cvNlsInit`, `cvNlsResid*`, `cvNlsFPFunction`, `cvNlsConvTest`) and
-   the fixed-point nonlinear solver (including Anderson acceleration and `SUNQRAdd_*` from
-   `sundials_iterative.c`).
+   the fixed-point nonlinear solver (including Anderson acceleration).
 9. `fvode_io`: all `Set*`/`Get*` and `print_all_stats` (table and CSV formats).
 * **Exit criterion:** nonstiff Adams + fixed-point examples (`cvAnalytic` style, a
   `cvDirectDemo_ls` problem 1 with functional iteration) match the C step trace (same steps
@@ -365,7 +387,7 @@ Port in this order. Each item is a direct translation of the named C function(s)
 
 | Risk | Mitigation |
 |---|---|
-| Rounding drift (FMA, vectorization) hides or mimics translation errors | Tolerance-based `compare` for normal builds; `compare-exact` (`-ffp-contract=off` on both sides) gives an exact check when a difference needs explaining |
+| Rounding drift (FMA, vectorization) hides or mimics translation errors | `compare-exact` (`-ffp-contract=off` on both sides, bit-for-bit) is the fidelity check; tolerance-based `compare` only sanity-checks the optimized build |
 | Off-by-one errors from 0-based C indexing | Zero-based lower bounds on `zn`, `l`, `tq`, `tau`, `ssdat` and similar arrays; step-trace comparison detects divergence on the first step |
 | Large, stateful `cvStep` with many interacting flags | Port `cvode.c` routines nearly line for line with provenance comments; refactor only after the trace matches |
 | Hidden dependencies on SUNDIALS internals (e.g., `N_VGetLength`, `SUNNonlinSol` callbacks reaching into `cv_mem`) | Grep each in-scope file for every external symbol before porting it, and record the mapping table in `doc/mapping.md` |

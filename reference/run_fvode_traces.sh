@@ -11,7 +11,7 @@ mkdir -p reference/out
 
 for f in reference/fortran/trace_*.f90; do
     name="$(basename "${f%.f90}")"
-    [ "$name" = "trace_common" ] && continue
+    case "$name" in trace_common|*_driver) continue ;; esac
     fpm run --example "$name" --profile release "$@" > /dev/null
     echo "wrote reference/out/fvode_${name#trace_}.csv"
 done

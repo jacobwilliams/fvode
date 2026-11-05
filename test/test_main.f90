@@ -8,6 +8,7 @@
     use testdrive, only: run_testsuite, new_testsuite, testsuite_type
     use test_parameters, only: collect_parameters
     use test_nvector, only: collect_nvector
+    use test_core, only: collect_core
 
     implicit none
 
@@ -18,7 +19,8 @@
     stat = 0
 
     testsuites = [ new_testsuite("parameters", collect_parameters), &
-                   new_testsuite("nvector",    collect_nvector)    ]
+                   new_testsuite("nvector",    collect_nvector),   &
+                   new_testsuite("core",       collect_core)       ]
 
     do is = 1, size(testsuites)
         write(error_unit, fmt) "Testing:", testsuites(is)%name

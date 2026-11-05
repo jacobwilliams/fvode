@@ -206,6 +206,19 @@
         procedure,public :: set_max_err_test_fails => CVodeSetMaxErrTestFails
         procedure,public :: set_max_conv_fails  => CVodeSetMaxConvFails
         procedure,public :: set_nonlin_conv_coef => CVodeSetNonlinConvCoef
+        procedure,public :: set_max_nonlin_iters => CVodeSetMaxNonlinIters
+        procedure,public :: set_delta_gamma_max_lsetup => CVodeSetDeltaGammaMaxLSetup
+        procedure,public :: set_lsetup_frequency => CVodeSetLSetupFrequency
+        procedure,public :: set_eta_fixed_step_bounds => CVodeSetEtaFixedStepBounds
+        procedure,public :: set_eta_max_first_step => CVodeSetEtaMaxFirstStep
+        procedure,public :: set_eta_max_early_step => CVodeSetEtaMaxEarlyStep
+        procedure,public :: set_num_steps_eta_max_early_step => CVodeSetNumStepsEtaMaxEarlyStep
+        procedure,public :: set_eta_max         => CVodeSetEtaMax
+        procedure,public :: set_eta_min         => CVodeSetEtaMin
+        procedure,public :: set_eta_min_err_fail => CVodeSetEtaMinErrFail
+        procedure,public :: set_eta_max_err_fail => CVodeSetEtaMaxErrFail
+        procedure,public :: set_num_fails_eta_max_err_fail => CVodeSetNumFailsEtaMaxErrFail
+        procedure,public :: set_eta_conv_fail   => CVodeSetEtaConvFail
 
         ! optional outputs (cvode_io.c)
         procedure,public :: get_num_steps       => CVodeGetNumSteps
@@ -222,6 +235,15 @@
         procedure,public :: get_num_nonlin_solv_iters => CVodeGetNumNonlinSolvIters
         procedure,public :: get_num_nonlin_solv_conv_fails => CVodeGetNumNonlinSolvConvFails
         procedure,public :: get_num_step_solve_fails => CVodeGetNumStepSolveFails
+        procedure,public :: get_current_gamma   => CVodeGetCurrentGamma
+        procedure,public :: get_num_stab_lim_order_reds => CVodeGetNumStabLimOrderReds
+        procedure,public :: get_num_g_evals     => CVodeGetNumGEvals
+        procedure,public :: get_current_state   => CVodeGetCurrentState
+        procedure,public :: get_err_weights     => CVodeGetErrWeights
+        procedure,public :: get_est_local_errors => CVodeGetEstLocalErrors
+        procedure,public :: get_integrator_stats => CVodeGetIntegratorStats
+        procedure,public :: get_nonlin_solv_stats => CVodeGetNonlinSolvStats
+        procedure,public :: print_all_stats     => CVodePrintAllStats
 
         ! nonlinear solver interface (cvode_nls.c)
         procedure :: nls_sys      => cvNlsSys
@@ -260,6 +282,7 @@
     end interface
 
     public :: cv_rhs_fn, cv_ewt_fn
+    public :: CVodeGetReturnFlagName
 
     contains
 !*****************************************************************************************
@@ -3275,6 +3298,292 @@
     end subroutine CVodeSetNonlinConvCoef
 !*****************************************************************************************
 
+!*****************************************************************************************
+!>
+!  `CVodeSetMaxNonlinIters`: maximum nonlinear iterations per step (default 3).
+
+    subroutine CVodeSetMaxNonlinIters(me, maxcor, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    integer,intent(in) :: maxcor
+    integer,intent(out) :: flag
+
+    if (.not. allocated(me%NLS)) then
+        call cvProcessError(me, CV_MEM_FAIL, 'CVodeSetMaxNonlinIters', 'A memory request failed.')
+        flag = CV_MEM_FAIL
+        return
+    end if
+
+    flag = me%NLS%set_max_iters(maxcor)
+
+    end subroutine CVodeSetMaxNonlinIters
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetDeltaGammaMaxLSetup`: gamma ratio threshold for calling the linear
+!  solver setup (< 0 restores the default).
+
+    subroutine CVodeSetDeltaGammaMaxLSetup(me, dgmax_lsetup, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: dgmax_lsetup
+    integer,intent(out) :: flag
+
+    if (dgmax_lsetup < ZERO) then
+        me%dgmax_lsetup = DGMAX_LSETUP_DEFAULT
+    else
+        me%dgmax_lsetup = dgmax_lsetup
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetDeltaGammaMaxLSetup
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetLSetupFrequency`: maximum steps between linear solver setup calls
+!  (0 restores the default).
+
+    subroutine CVodeSetLSetupFrequency(me, msbp, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    integer(li),intent(in) :: msbp
+    integer,intent(out) :: flag
+
+    if (msbp < 0) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetLSetupFrequency', &
+                            'A negative setup frequency was provided')
+        flag = CV_ILL_INPUT
+        return
+    end if
+
+    if (msbp == 0) then
+        me%msbp = MSBP_DEFAULT
+    else
+        me%msbp = msbp
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetLSetupFrequency
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaFixedStepBounds`: keep the step size if
+!  `eta_min_fx < eta < eta_max_fx` (invalid values restore the defaults).
+
+    subroutine CVodeSetEtaFixedStepBounds(me, eta_min_fx, eta_max_fx, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_min_fx
+    real(wp),intent(in) :: eta_max_fx
+    integer,intent(out) :: flag
+
+    if (eta_min_fx >= ZERO .and. eta_min_fx <= ONE) then
+        me%eta_min_fx = eta_min_fx
+    else
+        me%eta_min_fx = ETA_MIN_FX_DEFAULT
+    end if
+    if (eta_max_fx >= ONE) then
+        me%eta_max_fx = eta_max_fx
+    else
+        me%eta_max_fx = ETA_MAX_FX_DEFAULT
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaFixedStepBounds
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMaxFirstStep`: maximum step size increase after the first step
+!  (<= 1 restores the default).
+
+    subroutine CVodeSetEtaMaxFirstStep(me, eta_max_fs, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_max_fs
+    integer,intent(out) :: flag
+
+    if (eta_max_fs <= ONE) then
+        me%eta_max_fs = ETA_MAX_FS_DEFAULT
+    else
+        me%eta_max_fs = eta_max_fs
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMaxFirstStep
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMaxEarlyStep`: maximum step size increase on early steps
+!  (<= 1 restores the default).
+
+    subroutine CVodeSetEtaMaxEarlyStep(me, eta_max_es, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_max_es
+    integer,intent(out) :: flag
+
+    if (eta_max_es <= ONE) then
+        me%eta_max_es = ETA_MAX_ES_DEFAULT
+    else
+        me%eta_max_es = eta_max_es
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMaxEarlyStep
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetNumStepsEtaMaxEarlyStep`: number of early steps that use
+!  eta_max_es (< 0 restores the default).
+
+    subroutine CVodeSetNumStepsEtaMaxEarlyStep(me, small_nst, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    integer(li),intent(in) :: small_nst
+    integer,intent(out) :: flag
+
+    if (small_nst < 0) then
+        me%small_nst = SMALL_NST_DEFAULT
+    else
+        me%small_nst = small_nst
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetNumStepsEtaMaxEarlyStep
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMax`: maximum step size increase on a general step
+!  (<= 1 restores the default).
+
+    subroutine CVodeSetEtaMax(me, eta_max_gs, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_max_gs
+    integer,intent(out) :: flag
+
+    if (eta_max_gs <= ONE) then
+        me%eta_max_gs = ETA_MAX_GS_DEFAULT
+    else
+        me%eta_max_gs = eta_max_gs
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMax
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMin`: minimum step size reduction on a general step
+!  (outside (0,1) restores the default).
+
+    subroutine CVodeSetEtaMin(me, eta_min, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_min
+    integer,intent(out) :: flag
+
+    if (eta_min <= ZERO .or. eta_min >= ONE) then
+        me%eta_min = ETA_MIN_DEFAULT
+    else
+        me%eta_min = eta_min
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMin
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMinErrFail`: minimum step size reduction after an error test
+!  failure (outside (0,1) restores the default).
+
+    subroutine CVodeSetEtaMinErrFail(me, eta_min_ef, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_min_ef
+    integer,intent(out) :: flag
+
+    if (eta_min_ef <= ZERO .or. eta_min_ef >= ONE) then
+        me%eta_min_ef = ETA_MIN_EF_DEFAULT
+    else
+        me%eta_min_ef = eta_min_ef
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMinErrFail
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaMaxErrFail`: maximum step size ratio after multiple error test
+!  failures (outside (0,1) restores the default).
+
+    subroutine CVodeSetEtaMaxErrFail(me, eta_max_ef, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_max_ef
+    integer,intent(out) :: flag
+
+    if (eta_max_ef <= ZERO .or. eta_max_ef >= ONE) then
+        me%eta_max_ef = ETA_MAX_EF_DEFAULT
+    else
+        me%eta_max_ef = eta_max_ef
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaMaxErrFail
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetNumFailsEtaMaxErrFail`: number of error test failures after which
+!  eta_max_ef is used (< 0 restores the default).
+
+    subroutine CVodeSetNumFailsEtaMaxErrFail(me, small_nef, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    integer,intent(in) :: small_nef
+    integer,intent(out) :: flag
+
+    if (small_nef < 0) then
+        me%small_nef = SMALL_NEF_DEFAULT
+    else
+        me%small_nef = small_nef
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetNumFailsEtaMaxErrFail
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeSetEtaConvFail`: step size ratio after a nonlinear convergence
+!  failure (outside (0,1) restores the default).
+
+    subroutine CVodeSetEtaConvFail(me, eta_cf, flag)
+
+    class(cvode_solver),intent(inout) :: me
+    real(wp),intent(in) :: eta_cf
+    integer,intent(out) :: flag
+
+    if (eta_cf <= ZERO .or. eta_cf >= ONE) then
+        me%eta_cf = ETA_CF_DEFAULT
+    else
+        me%eta_cf = eta_cf
+    end if
+    flag = CV_SUCCESS
+
+    end subroutine CVodeSetEtaConvFail
+!*****************************************************************************************
+
 !=========================================================================================
 !  Optional outputs (cvode_io.c)
 !=========================================================================================
@@ -3348,6 +3657,204 @@
     class(cvode_solver),intent(in) :: me
     v = me%ncfn
     end function CVodeGetNumStepSolveFails
+
+    pure real(wp) function CVodeGetCurrentGamma(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%gamma
+    end function CVodeGetCurrentGamma
+
+    pure integer(li) function CVodeGetNumStabLimOrderReds(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nor
+    end function CVodeGetNumStabLimOrderReds
+
+    pure integer(li) function CVodeGetNumGEvals(me) result(v)
+    class(cvode_solver),intent(in) :: me
+    v = me%nge
+    end function CVodeGetNumGEvals
+
+    subroutine CVodeGetCurrentState(me, y)
+    !! The current internal state vector (C returns a pointer to `cv_y`).
+    class(cvode_solver),intent(in) :: me
+    real(wp),dimension(:),intent(out) :: y
+    y = me%y
+    end subroutine CVodeGetCurrentState
+
+    subroutine CVodeGetErrWeights(me, eweight)
+    !! The error weight vector `ewt`.
+    class(cvode_solver),intent(in) :: me
+    real(wp),dimension(:),intent(out) :: eweight
+    eweight = me%ewt
+    end subroutine CVodeGetErrWeights
+
+    subroutine CVodeGetEstLocalErrors(me, ele)
+    !! The estimated local errors of the last step.
+    class(cvode_solver),intent(in) :: me
+    real(wp),dimension(:),intent(out) :: ele
+    ele = me%acor
+    end subroutine CVodeGetEstLocalErrors
+
+    subroutine CVodeGetIntegratorStats(me, nsteps, nfevals, nlinsetups, netfails, &
+                                       qlast, qcur, hinused, hlast, hcur, tcur)
+    !! All main integrator statistics in one call.
+    class(cvode_solver),intent(in) :: me
+    integer(li),intent(out) :: nsteps, nfevals, nlinsetups, netfails
+    integer,intent(out) :: qlast, qcur
+    real(wp),intent(out) :: hinused, hlast, hcur, tcur
+    nsteps     = me%nst
+    nfevals    = me%nfe
+    nlinsetups = me%nsetups
+    netfails   = me%netf
+    qlast      = me%qu
+    qcur       = me%next_q
+    hinused    = me%h0u
+    hlast      = me%hu
+    hcur       = me%next_h
+    tcur       = me%tn
+    end subroutine CVodeGetIntegratorStats
+
+    subroutine CVodeGetNonlinSolvStats(me, nniters, nnfails)
+    !! Nonlinear solver statistics.
+    class(cvode_solver),intent(in) :: me
+    integer(li),intent(out) :: nniters, nnfails
+    nniters = me%nni
+    nnfails = me%nnf
+    end subroutine CVodeGetNonlinSolvStats
+
+!*****************************************************************************************
+!>
+!  `CVodePrintAllStats`: print all integrator statistics, as a table
+!  (`SUN_OUTPUTFORMAT_TABLE`) or as one CSV record of name,value pairs
+!  (`SUN_OUTPUTFORMAT_CSV`).
+
+    subroutine CVodePrintAllStats(me, iunit, fmt, flag)
+
+    class(cvode_solver),intent(in) :: me
+    integer,intent(in) :: iunit
+    integer,intent(in) :: fmt
+    integer,intent(out) :: flag
+
+    if (fmt /= SUN_OUTPUTFORMAT_TABLE .and. fmt /= SUN_OUTPUTFORMAT_CSV) then
+        call cvProcessError(me, CV_ILL_INPUT, 'CVodePrintAllStats', 'Invalid formatting option.')
+        flag = CV_ILL_INPUT
+        return
+    end if
+
+    ! step and method stats
+    call put_real('Current time', me%tn, start=.true.)
+    call put_long('Steps', me%nst)
+    call put_long('Error test fails', me%netf)
+    call put_long('NLS step fails', me%ncfn)
+    call put_long('Constraint fails', 0_li)          ! [not yet ported] constraints
+    call put_long('Constraint corrections', 0_li)
+    call put_real('Initial step size', me%h0u)
+    call put_real('Last step size', me%hu)
+    call put_real('Current step size', me%next_h)
+    call put_long('Last method order', int(me%qu, li))
+    call put_long('Current method order', int(me%next_q, li))
+    call put_long('Stab. lim. order reductions', me%nor)
+
+    ! function evaluations
+    call put_long('RHS fn evals', me%nfe)
+
+    ! nonlinear solver stats
+    call put_long('NLS iters', me%nni)
+    call put_long('NLS fails', me%nnf)
+    if (me%nst > 0) call put_real('NLS iters per step', real(me%nni, wp) / real(me%nst, wp))
+
+    ! linear solver stats
+    call put_long('LS setups', me%nsetups)
+    ! [not yet ported] linear solver interface statistics
+
+    ! rootfinding stats
+    call put_long('Root fn evals', me%nge)
+
+    ! [not yet ported] projection stats
+
+    if (fmt == SUN_OUTPUTFORMAT_CSV) write(iunit, '(a)') ''   ! end the CSV record
+    flag = CV_SUCCESS
+
+    contains
+
+        subroutine put_real(name, value, start)
+        character(len=*),intent(in) :: name
+        real(wp),intent(in) :: value
+        logical,intent(in),optional :: start
+        if (fmt == SUN_OUTPUTFORMAT_TABLE) then
+            write(iunit, '(a," = ",a)') pad(name), g_str(value)
+        else
+            if (.not. present(start)) write(iunit, '(a)', advance='no') ','
+            write(iunit, '(a,",",es23.15e3)', advance='no') name, value
+        end if
+        end subroutine put_real
+
+        subroutine put_long(name, value)
+        character(len=*),intent(in) :: name
+        integer(li),intent(in) :: value
+        if (fmt == SUN_OUTPUTFORMAT_TABLE) then
+            write(iunit, '(a," = ",i0)') pad(name), value
+        else
+            write(iunit, '(",",a,",",i0)', advance='no') name, value
+        end if
+        end subroutine put_long
+
+        function pad(name) result(s)
+        !! left-justified in SUN_TABLE_WIDTH = 29 characters
+        character(len=*),intent(in) :: name
+        character(len=max(29, len(name))) :: s
+        s = name
+        end function pad
+
+    end subroutine CVodePrintAllStats
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `CVodeGetReturnFlagName`: the name of a CVODE return flag.
+!
+!  (Upstream returns the misspelled "CV_NLS_SETUPT_FAIL" for
+!  `CV_NLS_SETUP_FAIL`; the correct name is returned here.)
+
+    function CVodeGetReturnFlagName(flag) result(name)
+
+    integer,intent(in) :: flag
+    character(len=:),allocatable :: name
+
+    select case (flag)
+    case (CV_SUCCESS);            name = 'CV_SUCCESS'
+    case (CV_TSTOP_RETURN);       name = 'CV_TSTOP_RETURN'
+    case (CV_ROOT_RETURN);        name = 'CV_ROOT_RETURN'
+    case (CV_TOO_MUCH_WORK);      name = 'CV_TOO_MUCH_WORK'
+    case (CV_TOO_MUCH_ACC);       name = 'CV_TOO_MUCH_ACC'
+    case (CV_ERR_FAILURE);        name = 'CV_ERR_FAILURE'
+    case (CV_CONV_FAILURE);       name = 'CV_CONV_FAILURE'
+    case (CV_LINIT_FAIL);         name = 'CV_LINIT_FAIL'
+    case (CV_LSETUP_FAIL);        name = 'CV_LSETUP_FAIL'
+    case (CV_LSOLVE_FAIL);        name = 'CV_LSOLVE_FAIL'
+    case (CV_RHSFUNC_FAIL);       name = 'CV_RHSFUNC_FAIL'
+    case (CV_FIRST_RHSFUNC_ERR);  name = 'CV_FIRST_RHSFUNC_ERR'
+    case (CV_REPTD_RHSFUNC_ERR);  name = 'CV_REPTD_RHSFUNC_ERR'
+    case (CV_UNREC_RHSFUNC_ERR);  name = 'CV_UNREC_RHSFUNC_ERR'
+    case (CV_RTFUNC_FAIL);        name = 'CV_RTFUNC_FAIL'
+    case (CV_MEM_FAIL);           name = 'CV_MEM_FAIL'
+    case (CV_MEM_NULL);           name = 'CV_MEM_NULL'
+    case (CV_ILL_INPUT);          name = 'CV_ILL_INPUT'
+    case (CV_NO_MALLOC);          name = 'CV_NO_MALLOC'
+    case (CV_BAD_K);              name = 'CV_BAD_K'
+    case (CV_BAD_T);              name = 'CV_BAD_T'
+    case (CV_BAD_DKY);            name = 'CV_BAD_DKY'
+    case (CV_TOO_CLOSE);          name = 'CV_TOO_CLOSE'
+    case (CV_NLS_INIT_FAIL);      name = 'CV_NLS_INIT_FAIL'
+    case (CV_NLS_SETUP_FAIL);     name = 'CV_NLS_SETUP_FAIL'
+    case (CV_NLS_FAIL);           name = 'CV_NLS_FAIL'
+    case (CV_PROJ_MEM_NULL);      name = 'CV_PROJ_MEM_NULL'
+    case (CV_PROJFUNC_FAIL);      name = 'CV_PROJFUNC_FAIL'
+    case (CV_REPTD_PROJFUNC_ERR); name = 'CV_REPTD_PROJFUNC_ERR'
+    case default;                 name = 'NONE'
+    end select
+
+    end function CVodeGetReturnFlagName
+!*****************************************************************************************
 
 !=========================================================================================
 !  Message formatting helpers (SUN_FORMAT_G is "%.15g")

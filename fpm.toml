@@ -45,3 +45,18 @@ search = true
 name = "trace_vdp_adams_fp"
 source-dir = "reference/fortran"
 main = "trace_vdp_adams_fp.f90"
+
+[[example]]
+name = "trace_vdp_adams_aa"
+source-dir = "reference/fortran"
+main = "trace_vdp_adams_aa.f90"
+
+[[example]]
+name = "trace_vdp_adams_aa_damped"
+source-dir = "reference/fortran"
+main = "trace_vdp_adams_aa_damped.f90"
+
+[[example]]
+name = "trace_analytic_fp"
+source-dir = "reference/fortran"
+main = "trace_analytic_fp.f90"

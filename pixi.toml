@@ -14,7 +14,7 @@ ford = ">=7.0"
 [tasks]
 build = "fpm build --profile release"
 test = "fpm test --profile debug"
-examples = "fpm run --example --all --profile release"
+examples = "fpm run --example 'cv_*' --profile release"
 # pixi skips conda post-link scripts, so register the graphviz plugins first
 graphviz-config = "dot -c"
 docs = { cmd = "ford fpm.toml", depends-on = ["graphviz-config"] }
@@ -42,10 +42,10 @@ c-compiler = "*"
 ref-build = "bash reference/build_reference.sh"
 ref-run = { cmd = "bash reference/run_reference.sh", depends-on = ["ref-build"] }
 fvode-traces = "bash reference/run_fvode_traces.sh"
-# normal (optimized) FVODE build: counters must match, reals within a tolerance
-compare = { cmd = "python reference/compare.py", depends-on = ["ref-run", "fvode-traces"] }
-# diagnostic: FVODE built without FMA contraction must match the C reference exactly
-compare-exact = { cmd = "bash reference/run_fvode_traces.sh --flag -ffp-contract=off && python reference/compare.py --rtol 0", depends-on = ["ref-run"] }
+# fidelity check: FVODE built without FMA contraction must match the C reference exactly
+compare-exact = { cmd = "bash reference/run_fvode_traces.sh --flag -ffp-contract=off && python reference/compare.py --exact", depends-on = ["ref-run"] }
+# sanity check of the normal (optimized) build: tolerance-based, see reference/compare.py
+compare = { cmd = "bash reference/run_fvode_traces.sh && python reference/compare.py", depends-on = ["ref-run"] }
 
 [environments]
 reference = ["reference"]
