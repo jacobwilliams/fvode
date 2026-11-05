@@ -1,0 +1,13 @@
+[workspace]
+authors = ["Jacob Williams <jacobwilliams@users.noreply.github.com>"]
+channels = ["conda-forge"]
+name = "fvode"
+platforms = ["osx-arm64", "linux-64", "linux-aarch64", "osx-64", "win-64"]
+version = "0.0.1"
+
+[dependencies]
+gfortran = "16.*"
+fpm = ">=0.13.0,<0.14"
+python = "3.13.*"
+ford = ">=7.0"
+

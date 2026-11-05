@@ -1,0 +1,38 @@
+name = "fvode"
+version = "0.0.1"
+license = "MIT"
+author = "Jacob Williams"
+maintainer = "Jacob Williams"
+description = "Modern Fortran port of CVODE"
+keywords = ["documentation"]
+
+[build]
+auto-executables = false
+auto-tests = true
+auto-examples = true
+module-naming = false
+
+[fortran]
+implicit-typing = false
+implicit-external = false
+source-form = "free"
+
+[extra.fvode]
+project = "fvode"
+summary = "Modern Fortran port of CVODE"
+project_github = "https://github.com/jacobwilliams/fvode"
+author = "Jacob Williams"
+github = "https://github.com/jacobwilliams"
+predocmark_alt = ">"
+predocmark = "<"
+docmark_alt = ""
+docmark = "!"
+license = "MIT"
+src_dir = ["./src"]
+output_dir = "./doc"
+display = ["public", "protected", "private"]
+source = true
+graph = true
+sort = "alpha"
+search = true
+front_page_file = "README.md"
