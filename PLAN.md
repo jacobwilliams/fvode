@@ -8,9 +8,11 @@ Build it with **fpm** and run every tool from the **pixi** environment.
 * **Faithful algorithm.** Every numerical decision should match CVODE: step size and order
   selection, error test, Nordsieck history updates, nonlinear solver convergence test,
   Jacobian/LS setup heuristics, root finding, constraints, stability limit detection.
-  Given the same problem, options and tolerances, FVODE should produce **identical
-  integrator statistics** (`nst`, `nfe`, `nsetups`, `netf`, `nni`, `ncfn`, `qlast`, `hlast`, …)
-  and solutions that agree to near round-off.
+  The translation must be **mathematically equivalent**, not bit-for-bit: the compiler may
+  optimize (fused multiply-add, vectorization), so real values drift from the C values by
+  rounding. Given the same problem, options and tolerances, FVODE should take the same steps
+  with the same integrator statistics (`nst`, `nfe`, `nsetups`, `netf`, `nni`, `ncfn`,
+  `qlast`, …), with step sizes and solutions that agree to within that rounding drift.
 * **Pinned reference.** Translate from one fixed upstream version:
   **SUNDIALS v7.9.0** (commit `312fc0f`, `src/cvode/`). Every translated routine gets a
   provenance comment (`!! Translated from cvode.c: cvStep (SUNDIALS v7.9.0)`), so a later
@@ -44,8 +46,8 @@ The **SUNDIALS shared components** that CVODE depends on algorithmically are als
 
 | Upstream | Content | FVODE target |
 |---|---|---|
-| `nvector/serial` | vector ops (`N_VLinearSum`, `N_VWrmsNorm`, `N_VWL2Norm`, `N_VLinearCombination`, `N_VScaleAddMulti`, `N_VConstrMask`, `N_VMinQuotient`, …) | `fvode_nvector.f90` (procedures on `real(wp)` arrays) |
-| `sundials_math.c` | `SUNRsqrt`, `SUNRpowerR`, `SUNRCompare` | `fvode_math.f90` |
+| `nvector/serial` | vector ops (`N_VLinearSum`, `N_VWrmsNorm`, `N_VLinearCombination`, `N_VConstrMask`, `N_VMinQuotient`, …) | Fortran array expressions; `fvode_nvector.f90` for the few non-trivial ones |
+| `sundials_math.c` | `SUNRsqrt`, `SUNRpowerR`, `SUNMIN`, … | Fortran intrinsics |
 | `sundials_dense.c`, `sundials_band.c` | `denseGETRF/GETRS`, `bandGBTRF/GBTRS` (SUNDIALS's own LU, **not** LAPACK) | `fvode_dense.f90`, `fvode_band.f90` |
 | `sunmatrix/dense`, `sunmatrix/band` | matrix storage, `ScaleAddI`, `MatVec` | `fvode_matrix*.f90` |
 | `sunlinsol/dense`, `band` | direct solvers | `fvode_linsol_dense.f90`, `fvode_linsol_band.f90` |
@@ -73,27 +75,22 @@ The **SUNDIALS shared components** that CVODE depends on algorithmically are als
   SUNDIALS does with `SUNDIALS_SINGLE/DOUBLE/EXTENDED_PRECISION`.
 * `UNIT_ROUNDOFF` = `epsilon(1.0_wp)`, which is the same as SUNDIALS `SUN_UNIT_ROUNDOFF` (DBL_EPSILON).
 
-### 3.2 N_Vector → plain contiguous arrays
+### 3.2 N_Vector → plain arrays and array syntax
 
 CVODE only ever uses serial vectors through the N_Vector op table, so the abstraction adds
-nothing algorithmically. Replace it with `real(wp), dimension(:), contiguous` arrays and a
-module of vector kernels (`fvode_nvector`) that **replicate the serial implementation
-exactly**, including floating-point operation order. Examples:
+nothing algorithmically. Vectors are `real(wp)` arrays, and the vector operations are written
+as ordinary Fortran array expressions in the translated code:
 
-* `N_VWrmsNorm`: `sqrt(sum((x*w)**2)/n)`, accumulated in the same loop order. Do **not**
-  use `norm2`: it rescales internally and would change rounding.
-* `N_VLinearSum`: keep the special cases (`a==1, b==1`, `a==1, b==-1`, `a==b`, …), because
-  they change which operations run (for example `y - x` instead of `1*y + (-1)*x`).
-* Fused and vector-array ops (`N_VLinearCombination`, `N_VScaleAddMulti`,
-  `N_VDotProdMulti`, `N_VScaleVectorArray`) are **disabled by default** for serial
-  vectors. A default CVODE run therefore uses the generic fallbacks in
-  `sundials_nvector.c` (built from `N_VScale`/`N_VLinearSum`/`N_VDotProd`), and those are
-  what we port, not the fused serial kernels.
-* Aliasing (`N_VLinearSum(a, x, b, y, y)`) is common. All vector dummies have the
-  `target` attribute, so aliased calls are legal when the actual arguments are contiguous
-  targets. Arrays of vectors (`N_Vector*`) are arrays of `type(nvec_ptr)`. The C in-place
-  fast paths (`axpy`, scale-by) give the same bits as the general cases, so no pointer
-  identity test is needed.
+| SUNDIALS | Fortran |
+|---|---|
+| `N_VLinearSum(a,x,b,y,z)` | `z = a*x + b*y` |
+| `N_VScale(c,x,z)`, `N_VConst(c,z)` | `z = c*x`, `z = c` |
+| `N_VProd`, `N_VDiv`, `N_VAbs`, `N_VInv`, `N_VAddConst` | `x*y`, `x/y`, `abs(x)`, `1/x`, `x + b` |
+| `N_VDotProd`, `N_VMaxNorm`, `N_VMin` | `dot_product`, `maxval(abs(x))`, `minval` |
+| `N_VLinearCombination`, `N_VScaleAddMulti`, `N_VScaleVectorArray` | loops over columns of `zn` |
+
+Only the operations with real logic are functions in `fvode_nvector`: `n_vwrmsnorm`,
+`n_vinvtest`, `n_vconstrmask`, `n_vminquotient`.
 
 The Nordsieck array `cv_zn[L_MAX]` (an array of N_Vectors) becomes
 `real(wp), allocatable :: zn(:,:)` with bounds `zn(1:n, 0:L_MAX-1)`. **Keep zero-based
@@ -154,19 +151,16 @@ keep them polymorphic:
 |---|---|
 | `sunrealtype` | `real(wp)` |
 | `long int` counters | `integer(int64)` |
-| `SUNRabs` | `abs` |
-| `SUNMAX`, `SUNMIN` | `sun_max`, `sun_min` (C ternary semantics; **not** `max`/`min`, which differ for NaN and signed zeros) |
-| `SUNRpowerR(x,y)` | `sun_rpower_r` = `x**y` (gfortran calls the same libm `pow`; verified bitwise) |
-| `SUNRpowerI(x,i)` | `sun_rpower_i`, a repeated-multiplication loop (**not** `x**i`: gfortran's binary powering differs by ~1 ulp, e.g. 1.1⁵) |
-| `SUNRsqrt(x)` | `sun_rsqrt` (`0` for `x <= 0`) |
-| `SUNRdifferentsign` | `sun_rdifferentsign` (sign bit via `sign(1, x)`) |
+| `SUNRabs`, `SUNMAX`, `SUNMIN`, `SUNRsqrt` | `abs`, `max`, `min`, `sqrt` |
+| `SUNRpowerR(x,y)`, `SUNRpowerI(x,i)` | `x**y`, `x**i` |
+| `cv_mem->cv_X` | `me%X`; renames for case clashes: `cv_L` → `LL`, `M[]` → `mm` |
 | `#define` constants | `parameter`s with the same names: public codes in `fvode_parameters`, internal ones (`ONE`, `CORTES`, `ETA_MAX_FS_DEFAULT`, …) in `fvode_internal_parameters` (not re-exported). Only rename: `TINY` → `CV_TINY` (clashes with the intrinsic) |
 | `static` functions | `private` module procedures |
 | `goto`-free loops with `break` | `do … exit`; named blocks/`cycle` where C uses `continue` |
 | `0`-based arrays | explicit lower bounds (`0:`) where the algorithm indexes from 0 |
 
-Compile with `-ffp-contract=off` (no FMA contraction) in both FVODE and the C reference
-during verification, so that operation-order fidelity can be checked.
+FVODE is compiled with normal optimizations. For debugging, an FVODE build with
+`-ffp-contract=off` reproduces the C reference (which is built that way) exactly; see §6.
 
 ## 4. Repository layout
 
@@ -180,8 +174,7 @@ fvode/
 │   ├── fvode_kinds.F90           ! wp / ip / li kinds (cpp-selectable precision)
 │   ├── fvode_parameters.f90      ! public constants + return codes
 │   ├── fvode_internal_parameters.f90 ! internal CVODE constants
-│   ├── fvode_math.f90            ! sundials_math helpers
-│   ├── fvode_nvector.f90         ! serial N_Vector ops on real(wp) arrays
+│   ├── fvode_nvector.f90         ! the few non-trivial vector ops
 │   ├── core/  fvode_types.f90 fvode_core.f90 fvode_root.f90 fvode_stab.f90
 │   │          fvode_io.f90 fvode_nls.f90 fvode_ls.f90 fvode_diag.f90
 │   │          fvode_bandpre.f90 fvode_proj.f90
@@ -211,8 +204,6 @@ summarises it.
 | `pixi run lint` | debug build with `-Wall -Wextra -std=f2018 -fcheck=all` |
 | `pixi run docs` | FORD docs into `doc/` (registers graphviz plugins first: pixi skips conda post-link scripts) |
 
-Every Fortran build uses `--flag '-ffp-contract=off'`.
-
 **`reference` environment** (cmake, ninja, git, plus a C compiler: `gcc 16` on Linux,
 because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `c-compiler`
 (clang) on macOS; Windows is not supported for this env):
@@ -221,7 +212,9 @@ because the `c-compiler` metapackage pins gcc 15 and clashes with gfortran 16; `
 |---|---|
 | `ref-build` | [reference/build_reference.sh](reference/build_reference.sh): clone tag `v7.9.0`, build static CVODE + serial components with `-ffp-contract=off` into `reference/install` (runs once) |
 | `ref-run` | [reference/run_reference.sh](reference/run_reference.sh): regenerate `test/data/sundials_constants.txt`, then build and run every `reference/trace_*.c` into `reference/out/trace_*.csv` |
-| `compare` | [reference/compare.py](reference/compare.py): diff `reference/out/fvode_<name>.csv` against `trace_<name>.csv` |
+| `fvode-traces` | [reference/run_fvode_traces.sh](reference/run_fvode_traces.sh): run every FVODE trace driver `reference/fortran/trace_*.f90` (fpm examples) into `reference/out/fvode_*.csv` |
+| `compare` | [reference/compare.py](reference/compare.py): compare `fvode_<name>.csv` with `trace_<name>.csv` (optimized FVODE build, tolerance) |
+| `compare-exact` | same, with FVODE built with `-ffp-contract=off` and an exact comparison (debugging aid) |
 
 We build the reference from source at the pinned tag, not from the conda-forge `sundials`
 package, so the version matches exactly.
@@ -244,8 +237,12 @@ is not a FORD 7 option.
    This needs no changes to SUNDIALS. The matching FVODE program writes the same columns to
    `reference/out/fvode_<name>.csv`. `reference/compare.py` diffs the two traces:
    * integer columns (`nst`, `q`, counters) must match **exactly**,
-   * real columns must match to `≤ 1e-12` relative (target: bitwise with `-ffp-contract=off`).
-   The first divergent step points straight to the routine that was mistranslated.
+   * real columns must agree to a mixed tolerance (default `1e-3`, relative to the value or
+     to the column's maximum), which allows for rounding drift in the optimized build.
+
+   `compare-exact` is a debugging aid. It builds FVODE with `-ffp-contract=off` (like the C
+   reference) and requires exact equality, so the first differing step points straight to
+   a mistranslated routine.
 3. **Example regression.** Port the upstream serial examples and compare against the
    shipped `.out` files (final stats and solution values):
    `cvRoberts_dns` (BDF + Newton + dense, with roots), `cvRoberts_dns_uw` (user `ewt`),
@@ -266,7 +263,7 @@ phase can be verified on its own.
 ### Phase 0: Scaffolding ✅ done
 Delivered: `LICENSE` (MIT + derivation note), `LICENSE-SUNDIALS`, `fvode_kinds`,
 `fvode_parameters`, `fvode_internal_parameters`, and the `fvode` umbrella module. There is a
-unit test that checks all 207 upstream constants bitwise against
+unit test that checks all 207 upstream constants against
 `test/data/sundials_constants.txt`, which is generated from the C headers by
 `reference/constants.c` plus the `.c`-local `#define`s parsed by `reference/parse_defines.py`.
 The reference build and trace harness exist, with two traces so far:
@@ -280,25 +277,25 @@ Original task list:
 * Build the C reference (`pixi run -e reference ref-build`) and write the C trace harness.
 * **Exit criterion:** `pixi run build`, `pixi run test` (empty), and `pixi run -e reference ref-build` all succeed.
 
-### Phase 1: Math and vector kernels ✅ done
-* `fvode_math`: `sun_min/max/sqr/rsqrt/rabs`, `sun_ipower_i`, `sun_rpower_i`,
-  `sun_rpower_r`, `sun_rsamesign/differentsign`, `sun_rcompare(_tol)`. Pure Fortran, no C interop.
-* `fvode_nvector`: every serial op that the in-scope files call: `LinearSum` (all special
-  cases), `Const`, `Prod`, `Div`, `Scale`, `Abs`, `Inv`, `AddConst`, `DotProd`, `MaxNorm`,
-  `WrmsNorm`, `WSqrSumLocal`, `Min`, `Compare`, `InvTest`, `ConstrMask`, `MinQuotient`, plus
-  the generic fallbacks of `LinearCombination`, `ScaleAddMulti`, `DotProdMulti`,
-  `ScaleVectorArray`.
-* Verified: [reference/nvector_ops.c](reference/nvector_ops.c) runs each op through the real
-  SUNDIALS API, including the aliased in-place calls, on 257-element inputs with mixed
-  magnitudes, zeros and constraint values. `test/test_nvector.f90` reproduces each op and
-  requires **bitwise** equality, in both debug and release (`-O3`) builds. Mutation checks
-  confirmed the tests catch a replaced `N_VLinearSum` special case and `x**i` in place of the
-  `SUNRpowerI` loop.
-* Deferred to Phase 5: `N_VDotProdMultiLocal`/`AllReduce`. They are only used by the
-  non-default QR orthogonalization options of fixed-point Anderson acceleration
-  (`SUNQRAdd_ICWY_SB`, `SUNQRAdd_DCGS2_SB`).
+### Phase 1: Vector operations ✅ done
+* First done as bitwise-exact ports of the serial C kernels and `sundials_math` helpers.
+  Then simplified when we decided that mathematical equivalence is the goal: simple
+  operations are now array expressions, `fvode_math` was removed, and `fvode_nvector` keeps
+  `n_vwrmsnorm`, `n_vinvtest`, `n_vconstrmask` and `n_vminquotient`, with unit tests.
+* Finding kept from the exact port: serial vectors have fused operations **disabled** by
+  default, so CVODE uses the generic `N_VLinearCombination`/`N_VScaleAddMulti` fallbacks.
+  Mathematically these are plain sums, which is what the array code does.
 
-### Phase 2: Core integrator, explicit path (functional/fixed-point iteration)
+### Phase 2: Core integrator, explicit path (functional/fixed-point iteration) — in progress
+**Status:** items 1–8 done except Anderson acceleration; item 9 partly done (the common
+setters and getters). `fvode_core` holds the solver type and the step logic, and
+`fvode_nonlinsol(_fixedpoint)` holds the nonlinear solver interface. The
+`vdp_adams_fp` trace (217 steps) has the same steps and all counters as C, with real values
+within 2e-4 of the column scale. With `-ffp-contract=off` it is bit-for-bit identical
+(`compare-exact`), which confirms the translation. Places where the C code handles
+not-yet-ported features (linear solvers, roots, constraints, projection, STALD, resize) are
+marked `[not yet ported]`.
+
 Port in this order. Each item is a direct translation of the named C function(s):
 1. `cvode_solver` type ← `CVodeMemRec`; `create`, `init`, `reinit`, `free` (finalizer).
 2. Tolerances and weights: `cvEwtSet`, `cvEwtSetSS`, `cvEwtSetSV`, user `ewt` function.
@@ -316,7 +313,8 @@ Port in this order. Each item is a direct translation of the named C function(s)
    `sundials_iterative.c`).
 9. `fvode_io`: all `Set*`/`Get*` and `print_all_stats` (table and CSV formats).
 * **Exit criterion:** nonstiff Adams + fixed-point examples (`cvAnalytic` style, a
-  `cvDirectDemo_ls` problem 1 with functional iteration) match the C step trace exactly.
+  `cvDirectDemo_ls` problem 1 with functional iteration) match the C step trace (same steps
+  and counters; exact with `compare-exact`).
 
 ### Phase 3: Newton and direct linear solvers
 * Dense and band matrices, `denseGETRF/GETRS`, `bandGBTRF/GBTRS`, `ScaleAddI`.
@@ -357,7 +355,7 @@ Port in this order. Each item is a direct translation of the named C function(s)
 * FORD documentation for every public procedure, with links to the corresponding CVODE
   User Guide sections. `README` usage example.
 * Performance pass: `contiguous`, avoid temporaries in hot loops, `-O3 -march=native`
-  release profile, and a benchmark against C CVODE. Optimisations must not change the step trace.
+  release profile, and a benchmark against C CVODE. Optimisations must keep `compare` passing.
 * Optional: LAPACK dense/band backends (`dgetrf`/`dgbtrf` via conda-forge `liblapack`),
   sparse CSC matrix + a native sparse LU, or a KLU binding. These come after fidelity is
   established and are clearly marked as non-reference paths.
@@ -367,7 +365,7 @@ Port in this order. Each item is a direct translation of the named C function(s)
 
 | Risk | Mitigation |
 |---|---|
-| Floating-point differences from operation reordering, FMA, compiler vectorization | `-ffp-contract=off` for both builds during verification; port the exact loop order of serial N_Vector kernels; avoid whole-array intrinsics where they could reorder sums (`sum` is fine for WRMS only if it matches serial order; otherwise use explicit loops) |
+| Rounding drift (FMA, vectorization) hides or mimics translation errors | Tolerance-based `compare` for normal builds; `compare-exact` (`-ffp-contract=off` on both sides) gives an exact check when a difference needs explaining |
 | Off-by-one errors from 0-based C indexing | Zero-based lower bounds on `zn`, `l`, `tq`, `tau`, `ssdat` and similar arrays; step-trace comparison detects divergence on the first step |
 | Large, stateful `cvStep` with many interacting flags | Port `cvode.c` routines nearly line for line with provenance comments; refactor only after the trace matches |
 | Hidden dependencies on SUNDIALS internals (e.g., `N_VGetLength`, `SUNNonlinSol` callbacks reaching into `cv_mem`) | Grep each in-scope file for every external symbol before porting it, and record the mapping table in `doc/mapping.md` |
@@ -377,7 +375,7 @@ Port in this order. Each item is a direct translation of the named C function(s)
 ## 9. Deliverables checklist
 
 - [ ] `pixi run build|test|examples|docs` all green on linux-64 and osx-arm64
-- [ ] `pixi run -e reference compare` reports identical integer stats for all ported examples
+- [ ] `pixi run -e reference compare` passes (identical steps and counters) for all ported examples
 - [ ] Every upstream serial CVODE example in §6.3 has a Fortran port under `example/`
 - [ ] `doc/mapping.md`: C function → Fortran procedure table
 - [ ] `LICENSE-SUNDIALS` + NOTICE in the README

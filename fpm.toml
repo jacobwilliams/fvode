@@ -39,3 +39,9 @@ source = true
 graph = true
 sort = "alpha"
 search = true
+
+# step-trace drivers for verification against the C reference (see reference/)
+[[example]]
+name = "trace_vdp_adams_fp"
+source-dir = "reference/fortran"
+main = "trace_vdp_adams_fp.f90"

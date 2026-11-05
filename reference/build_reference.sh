@@ -18,7 +18,9 @@ if [ -f "$INS/.built-$TAG" ]; then
     exit 0
 fi
 
-# -ffp-contract=off : no FMA contraction, so operation order matches FVODE builds
+# -ffp-contract=off: the reference does not fuse multiply-adds, so an FVODE
+# build with the same flag can be compared exactly (pixi task compare-exact).
+# Normal FVODE builds are optimized and compared with a tolerance.
 cmake -S "$SRC" -B "$BLD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="-ffp-contract=off" \

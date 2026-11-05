@@ -11,16 +11,14 @@ fpm = ">=0.13.0,<0.14"
 python = "3.13.*"
 ford = ">=7.0"
 
-# -ffp-contract=off : no FMA contraction, so floating-point operation order
-# matches the reference C build (see reference/build_reference.sh)
 [tasks]
-build = "fpm build --profile release --flag '-ffp-contract=off'"
-test = "fpm test --profile debug --flag '-ffp-contract=off'"
-examples = "fpm run --example --all --profile release --flag '-ffp-contract=off'"
+build = "fpm build --profile release"
+test = "fpm test --profile debug"
+examples = "fpm run --example --all --profile release"
 # pixi skips conda post-link scripts, so register the graphviz plugins first
 graphviz-config = "dot -c"
 docs = { cmd = "ford fpm.toml", depends-on = ["graphviz-config"] }
-lint = "fpm build --profile debug --flag '-ffp-contract=off -Wall -Wextra -std=f2018 -fcheck=all'"
+lint = "fpm build --profile debug --flag '-Wall -Wextra -std=f2018 -fcheck=all'"
 
 # ---------------------------------------------------------------------------
 # Reference C SUNDIALS (pinned v7.9.0), used only for verification
@@ -43,7 +41,11 @@ c-compiler = "*"
 [feature.reference.tasks]
 ref-build = "bash reference/build_reference.sh"
 ref-run = { cmd = "bash reference/run_reference.sh", depends-on = ["ref-build"] }
-compare = { cmd = "python reference/compare.py", depends-on = ["ref-run"] }
+fvode-traces = "bash reference/run_fvode_traces.sh"
+# normal (optimized) FVODE build: counters must match, reals within a tolerance
+compare = { cmd = "python reference/compare.py", depends-on = ["ref-run", "fvode-traces"] }
+# diagnostic: FVODE built without FMA contraction must match the C reference exactly
+compare-exact = { cmd = "bash reference/run_fvode_traces.sh --flag -ffp-contract=off && python reference/compare.py --rtol 0", depends-on = ["ref-run"] }
 
 [environments]
 reference = ["reference"]
