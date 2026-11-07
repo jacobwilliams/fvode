@@ -11,6 +11,7 @@
 
     module test_parameters
 
+    use iso_fortran_env, only: real64
     use fvode_kinds, only: wp
     use fvode_parameters
     use fvode_internal_parameters
@@ -57,6 +58,7 @@
 
     type(entry_type),allocatable :: table(:)  !! the reference table
     integer :: i  !! entry counter
+    integer :: idx  !! table index (entries that are only marked as checked)
 
     call read_table(error, table); if (allocated(error)) return
 
@@ -262,9 +264,17 @@
     call check_real(error, table, 'PT25', PT25); if (allocated(error)) return
     call check_real(error, table, 'PT9', PT9); if (allocated(error)) return
     call check_real(error, table, 'RDIV', RDIV); if (allocated(error)) return
-    call check_real(error, table, 'SUN_BIG_REAL', SUN_BIG_REAL); if (allocated(error)) return
-    call check_real(error, table, 'SUN_SMALL_REAL', SUN_SMALL_REAL); if (allocated(error)) return
-    call check_real(error, table, 'SUN_UNIT_ROUNDOFF', SUN_UNIT_ROUNDOFF); if (allocated(error)) return
+    ! the limits of the real kind: the table holds the double-precision values
+    ! (DBL_MAX, DBL_MIN, DBL_EPSILON), so they are only compared in a double build
+    if (wp == real64) then
+        call check_real(error, table, 'SUN_BIG_REAL', SUN_BIG_REAL); if (allocated(error)) return
+        call check_real(error, table, 'SUN_SMALL_REAL', SUN_SMALL_REAL); if (allocated(error)) return
+        call check_real(error, table, 'SUN_UNIT_ROUNDOFF', SUN_UNIT_ROUNDOFF); if (allocated(error)) return
+    else
+        idx = lookup(table, 'SUN_BIG_REAL')
+        idx = lookup(table, 'SUN_SMALL_REAL')
+        idx = lookup(table, 'SUN_UNIT_ROUNDOFF')
+    end if
     call check_real(error, table, 'THREE', THREE); if (allocated(error)) return
     call check_real(error, table, 'TINY', CV_TINY); if (allocated(error)) return
     call check_real(error, table, 'TWOPT5', TWOPT5); if (allocated(error)) return
@@ -384,7 +394,8 @@
     real(wp),intent(in) :: val  !! FVODE value of the constant
 
     integer :: idx, istat  !! table index and I/O status
-    real(wp) :: ref  !! reference value
+    real(real64) :: ref  !! reference value (the C library is built in double precision)
+    logical :: same  !! do the values agree?
 
     idx = lookup(table, name)
     if (idx == 0) then
@@ -396,7 +407,15 @@
         call test_failed(error, name//': reference value is not a real: '//table(idx)%value)
         return
     end if
-    if (val /= ref) call test_failed(error, name//' differs from SUNDIALS value '//table(idx)%value)
+    ! the table holds the double-precision values of the C build, so compare
+    ! in the lower of the two precisions: a real128 build rounds its value to
+    ! double, a real32 build rounds the reference to single
+    if (precision(val) >= precision(ref)) then
+        same = real(val, real64) == ref
+    else
+        same = val == real(ref, wp)
+    end if
+    if (.not. same) call test_failed(error, name//' differs from SUNDIALS value '//table(idx)%value)
 
     end subroutine check_real
 !*****************************************************************************************
