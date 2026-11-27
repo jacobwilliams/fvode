@@ -16,6 +16,8 @@ numpy = "*"
 [tasks]
 build = "fpm build --profile release"
 test = "fpm test --profile debug"
+# quad precision build (testdrive needs WITH_QP for its real128 checks)
+test-real128 = "fpm test test_main --profile debug --flag '-DREAL128 -DWITH_QP=1'"
 # FVODE vs DVODE and DDEABM: accuracy/cost tables and work-precision plots (test_output/)
 solver-comparison = "fpm test test_solver_comparison --profile release"
 examples = "fpm run --example 'cv_*' --profile release"
