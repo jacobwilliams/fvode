@@ -10,8 +10,6 @@ gfortran = "16.*"
 fpm = ">=0.13.0,<0.14"
 python = "3.13.*"
 ford = ">=7.0"
-matplotlib-base = "*"  # for the solver comparison plots (pyplot-fortran)
-numpy = "*"
 
 [tasks]
 build = "fpm build --profile release"

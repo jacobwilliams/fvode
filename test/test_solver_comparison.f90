@@ -339,8 +339,7 @@
 !  1e-3 to 1e-12; the error at the final time (max norm, against the
 !  exact solution), the number of right-hand side evaluations and the
 !  time per solve are tabulated, and work-precision plots (function
-!  evaluations vs error) are written to `test_output/` with
-!  pyplot-fortran (if python with matplotlib is available).
+!  evaluations vs error) are written to `test_output/` with fplotlib.
 !
 !  Checks: every solver reaches the final time at every tolerance; FVODE's
 !  error goes down with the tolerance and is small at tight tolerances;
@@ -352,7 +351,9 @@
     use fvode_kinds, only: wp
     use testdrive, only: run_testsuite, new_testsuite, testsuite_type, new_unittest, &
                          unittest_type, error_type, check
-    use pyplot_module, only: pyplot
+    use fplotlib, only: pdp => dp, status_t, STATUS_OK, figure, plot, set_xscale, set_yscale, &
+                        grid, legend, savefig, plt_title => title, plt_xlabel => xlabel, &
+                        plt_ylabel => ylabel, plt_close => close
     use comparison_problems
     use comparison_runners
 
@@ -502,30 +503,34 @@
     real(wp),dimension(NTOL,NUM_SOLVERS),intent(in) :: err  !! errors
     integer,dimension(NTOL,NUM_SOLVERS),intent(in) :: nevals  !! evaluations
     logical,dimension(NTOL,NUM_SOLVERS),intent(in) :: ok  !! success
-    type(pyplot) :: plt  !! the plot
     integer :: is, istat  !! solver index and status
+    type(status_t) :: status  !! status of writing the file
     character(len=*),parameter :: dir = 'test_output'  !! output directory
     character(len=*),dimension(NUM_SOLVERS),parameter :: styles = ['o--', 's- ', '^- ']  !! line styles
     integer,dimension(NUM_SOLVERS),parameter :: order = [SOLVER_DVODE, SOLVER_DDEABM, SOLVER_FVODE]  !! drawing order (FVODE on top: it often coincides with DVODE)
     integer :: k  !! drawing index
     logical,dimension(NTOL) :: mask  !! points to plot (successful, nonzero error)
     call execute_command_line('mkdir -p '//dir, exitstat=istat)
-    call plt%initialize(grid=.true., xlabel='max error at final time', &
-                        ylabel='number of function evaluations', title=title, &
-                        legend=.true., figsize=[8,6], use_oo_api=.true., tight_layout=.true.)
+    call figure(figsize=[8.0_pdp, 6.0_pdp])
     do k = 1, NUM_SOLVERS
         is = order(k)
         mask = ok(:,is) .and. err(:,is) > 0.0_wp
-        call plt%add_plot(pack(err(:,is), mask), real(pack(nevals(:,is), mask), wp), &
-                          label=solver_name(is), linestyle=trim(styles(is)), &
-                          markersize=merge(9, 6, is == SOLVER_FVODE), &
-                          linewidth=merge(1, 3, is == SOLVER_FVODE), &
-                          xscale='log', yscale='log', istat=istat)
+        call plot(real(pack(err(:,is), mask), pdp), real(pack(nevals(:,is), mask), pdp), &
+                  fmt=trim(styles(is)), label=solver_name(is), &
+                  markersize=merge(9.0_pdp, 6.0_pdp, is == SOLVER_FVODE), &
+                  lw=merge(1.0_pdp, 3.0_pdp, is == SOLVER_FVODE))
     end do
-    call plt%savefig(dir//'/'//problem_name(ip)//'.png', &
-                     pyfile=dir//'/'//problem_name(ip)//'.py', istat=istat)
-    if (istat /= 0) then
-        write(*,'(a)') 'note: the plot was not generated (python/matplotlib not available?)'
+    call set_xscale('log')
+    call set_yscale('log')
+    call grid(.true.)
+    call plt_title(title)
+    call plt_xlabel('max error at final time')
+    call plt_ylabel('number of function evaluations')
+    call legend()
+    call savefig(dir//'/'//problem_name(ip)//'.png', status=status)
+    call plt_close()
+    if (status%code /= STATUS_OK) then
+        write(*,'(a)') 'note: the plot was not generated: '//trim(status%message)
     else
         write(*,'(a)') 'wrote '//dir//'/'//problem_name(ip)//'.png'
     end if
