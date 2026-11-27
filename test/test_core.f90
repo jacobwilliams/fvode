@@ -38,7 +38,9 @@
                   new_unittest("root_direction",  test_root_direction), &
                   new_unittest("root_at_t0",      test_root_at_t0),  &
                   new_unittest("constraints_input", test_constraints_input), &
-                  new_unittest("stald_input",     test_stald_input)  ]
+                  new_unittest("stald_input",     test_stald_input), &
+                  new_unittest("adams_max_order", test_adams_max_order), &
+                  new_unittest("adams_high_order", test_adams_high_order)  ]
 
     end subroutine collect_core
 !*****************************************************************************************
@@ -232,8 +234,10 @@
     call cv%set_min_step(2.0_wp, flag)
     call check(error, flag, CV_ILL_INPUT);    if (allocated(error)) return
 
-    ! cannot increase the maximum order
+    ! cannot increase the BDF maximum order
     call cv%set_max_ord(6, flag)   ! BDF maximum is 5
+    call check(error, flag, CV_ILL_INPUT);    if (allocated(error)) return
+    call cv%set_max_ord(0, flag)
     call check(error, flag, CV_ILL_INPUT)
 
     end subroutine test_input_checks
@@ -435,6 +439,206 @@
     call check(error, flag, CV_ILL_INPUT, 'STALD accepted with Adams')
 
     end subroutine test_stald_input
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  `y1' = 20 t^19`, `y2' = 15 t^14` (solution `t^20`, `t^15`). The high
+!  derivatives of the solution vanish, so high Adams orders pay off.
+
+    function polynomial(me, t, y, ydot) result(retval)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
+
+    ydot(1) = 20 * t**19
+    ydot(2) = 15 * t**14
+    retval = 0
+
+    end function polynomial
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Harmonic oscillator `y1' = y2, y2' = -y1` (solution `cos t`, `-sin t`).
+
+    function oscillator(me, t, y, ydot) result(retval)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver (gives access to problem data)
+    real(wp),intent(in) :: t  !! current value of the independent variable
+    real(wp),dimension(:),intent(in) :: y  !! current state vector
+    real(wp),dimension(:),intent(out) :: ydot  !! time derivative dy/dt = f(t,y)
+    integer :: retval  !! return value: 0 on success
+
+    ydot(1) =  y(2)
+    ydot(2) = -y(1)
+    retval = 0
+
+    end function oscillator
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Integrate in one-step mode from `tstart` to `tout` (a
+!  stop time), and update the largest order used.
+
+    subroutine run_to(cv, tstart, tout, y, qused, error)
+
+    type(cvode_solver),intent(inout) :: cv  !! the solver (already initialized)
+    real(wp),intent(in) :: tstart  !! current time
+    real(wp),intent(in) :: tout  !! final time
+    real(wp),dimension(2),intent(inout) :: y  !! solution at tout
+    integer,intent(inout) :: qused  !! largest order used so far
+    type(error_type),allocatable,intent(inout) :: error  !! error information (allocated on failure)
+
+    real(wp) :: t  !! time reached
+    integer :: flag  !! return flag of the last solver call
+
+    t = tstart
+    call cv%set_stop_time(tout, flag); call check(error, flag, CV_SUCCESS)
+    if (allocated(error)) return
+    do while (t < tout)
+        call cv%solve(tout, y, t, CV_ONE_STEP, flag)
+        if (flag < 0) then
+            call check(error, flag, CV_SUCCESS); return
+        end if
+        qused = max(qused, cv%get_last_order())
+    end do
+
+    end subroutine run_to
+!*****************************************************************************************
+
+!*****************************************************************************************
+    subroutine test_adams_max_order(error)
+    !! the Adams maximum order can be decreased and increased, before the
+    !! integration and during it (which enlarges the history array)
+
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+
+    real(wp),parameter :: tf = 20.0_wp  !! final time
+    real(wp),parameter :: tmid = 5.0_wp  !! time at which the maximum order is changed
+    real(wp),parameter :: tol = 1.0e-9_wp  !! accuracy required of the solution
+
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y  !! solution vector
+    real(wp),dimension(2) :: yref  !! solution with the default maximum order
+    integer(li) :: nstref  !! number of steps with the default maximum order
+    integer :: flag  !! return flag of the last solver call
+    integer :: qused  !! largest order used
+    integer :: icase  !! which test case
+
+    do icase = 0, 3
+
+        y = [1.0_wp, 0.0_wp]
+        qused = 0
+        call cv%create(CV_ADAMS, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        select case (icase)
+        case (1)    ! decrease before init (zn is allocated for order 3)
+            call cv%set_max_ord(3, flag)
+        case (3)    ! increase before init
+            call cv%set_max_ord(16, flag)
+        end select
+        call check(error, flag, CV_SUCCESS); if (allocated(error)) return
+        call cv%init(oscillator, 0.0_wp, y, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        call cv%ss_tolerances(1.0e-13_wp, 1.0e-13_wp, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        call cv%set_nonlinear_solver(sun_nonlinsol_fixedpoint(2, 0), flag)
+        call check(error, flag, CV_SUCCESS); if (allocated(error)) return
+
+        call run_to(cv, 0.0_wp, tmid, y, qused, error); if (allocated(error)) return
+
+        select case (icase)
+        case (1)    ! the order reached the cap; raise it (q == qmax when enlarged)
+            call check(error, qused, 3); if (allocated(error)) return
+            call cv%set_max_ord(8, flag); call check(error, flag, CV_SUCCESS)
+            if (allocated(error)) return
+        case (2)    ! raise the default maximum mid-run (q < qmax when enlarged)
+            call cv%set_max_ord(16, flag); call check(error, flag, CV_SUCCESS)
+            if (allocated(error)) return
+        end select
+
+        call run_to(cv, tmid, tf, y, qused, error); if (allocated(error)) return
+        call check(error, y(1), cos(tf), thr=tol); if (allocated(error)) return
+        call check(error, y(2), -sin(tf), thr=tol); if (allocated(error)) return
+
+        select case (icase)
+        case (0)
+            yref = y
+            nstref = cv%get_num_steps()
+        case (1)
+            call check(error, qused > 3 .and. qused <= 8, 'raised maximum order not used')
+            if (allocated(error)) return
+        case (2:3)
+            ! orders above the default are not chosen for this problem in double
+            ! precision, so the solution is the same as with the default maximum
+            call check(error, cv%get_num_steps() == nstref, 'different number of steps')
+            if (allocated(error)) return
+            call check(error, y(1), yref(1), thr=10*epsilon(1.0_wp)); if (allocated(error)) return
+            call check(error, y(2), yref(2), thr=10*epsilon(1.0_wp)); if (allocated(error)) return
+        end select
+
+    end do
+
+    end subroutine test_adams_max_order
+!*****************************************************************************************
+
+!*****************************************************************************************
+    subroutine test_adams_high_order(error)
+    !! with enough precision (a `-DREAL128` build), Adams orders above the
+    !! default maximum of 12 are used once the maximum order is raised
+
+    type(error_type),allocatable,intent(out) :: error  !! error information (allocated if the test fails)
+
+    integer,parameter :: QDEF = 12  !! default Adams maximum order
+    integer,parameter :: QBIG = 16  !! raised maximum order
+    real(wp),parameter :: tf = 1.0_wp  !! final time
+    real(wp),parameter :: tol = 1.0e-33_wp  !! relative and absolute tolerance
+
+    type(cvode_solver) :: cv  !! the CVODE solver
+    real(wp),dimension(2) :: y  !! solution vector
+    integer :: flag  !! return flag of the last solver call
+    integer :: qused  !! largest order used
+    integer :: icase  !! 1: default maximum order, 2: raised
+
+    if (precision(1.0_wp) < 30) return  ! needs quad precision
+
+    do icase = 1, 2
+        y = [0.0_wp, 0.0_wp]
+        qused = 0
+        call cv%create(CV_ADAMS, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        if (icase == 2) then
+            call cv%set_max_ord(QBIG, flag); call check(error, flag, CV_SUCCESS)
+            if (allocated(error)) return
+        end if
+        call cv%init(polynomial, 0.0_wp, y, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        call cv%ss_tolerances(tol, tol, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+        call cv%set_nonlinear_solver(sun_nonlinsol_fixedpoint(2, 0), flag)
+        call check(error, flag, CV_SUCCESS); if (allocated(error)) return
+        call cv%set_max_num_steps(100000_li, flag); call check(error, flag, CV_SUCCESS)
+        if (allocated(error)) return
+
+        call run_to(cv, 0.0_wp, tf, y, qused, error); if (allocated(error)) return
+        call check(error, y(1), 1.0_wp, thr=1.0e-25_wp); if (allocated(error)) return
+        call check(error, y(2), 1.0_wp, thr=1.0e-25_wp); if (allocated(error)) return
+
+        if (icase == 1) then
+            call check(error, qused, QDEF, 'the default maximum order was not reached')
+        else
+            call check(error, qused > QDEF .and. qused <= QBIG, &
+                       'an order above the default maximum was not used')
+        end if
+        if (allocated(error)) return
+    end do
+
+    end subroutine test_adams_high_order
 !*****************************************************************************************
 
     end module test_core

@@ -15,8 +15,11 @@
 !  * `cv_L` (= q+1) is `me%LL` (it would clash with the coefficient array `cv_l`)
 !  * the local `M[3]` in `cvSetAdams` is `mm` (clashes with `m`)
 !
-!  Arrays keep the C index ranges: `zn(:,0:qmax)`, `l(0:L_MAX-1)`,
-!  `tau(0:L_MAX)` (`tau(1..q+1)` used), `tq(1:NUM_TESTS)`.
+!  Arrays keep the C index ranges: `zn(:,0:qmax)`, `l(0:qmax)`,
+!  `tau(0:qmax+1)` (`tau(1..q+1)` used), `tq(1:NUM_TESTS)`. Unlike C (where
+!  `l` and `tau` are fixed at `L_MAX`), `l` and `tau` are allocated from the
+!  maximum order, so that the Adams maximum order can be raised above
+!  `ADAMS_Q_MAX` with [[CVodeSetMaxOrd]].
 !
 !  The linear solver interface (`cvode_ls.c`) is in the submodule
 !  `fvode_core_ls`.
@@ -106,9 +109,9 @@
         real(wp) :: hscale = ZERO !! value of h used in zn
         real(wp) :: tn = ZERO     !! current internal value of t
         real(wp) :: tretlast = ZERO !! last value of t returned by solve
-        real(wp),dimension(0:L_MAX) :: tau = ZERO     !! previous step sizes, tau(1..q+1)
+        real(wp),dimension(:),allocatable :: tau      !! previous step sizes, tau(0:qmax_alloc+1) (tau(1..q+1) used)
         real(wp),dimension(NUM_TESTS) :: tq = ZERO    !! test quantities, tq(1..5)
-        real(wp),dimension(0:L_MAX-1) :: l = ZERO     !! coefficients of l(x)
+        real(wp),dimension(:),allocatable :: l        !! coefficients of l(x), l(0:qmax_alloc)
         real(wp) :: rl1 = ZERO     !! 1/l(1)
         real(wp) :: gamma = ZERO   !! gamma = h * rl1
         real(wp) :: gammap = ZERO  !! gamma at the last setup call
@@ -1030,6 +1033,11 @@
 
     ! set the saved value qmax_alloc
     me%qmax_alloc = maxord
+
+    ! allocate the method coefficient arrays, zero (C: fixed size L_MAX)
+    if (allocated(me%l))   deallocate(me%l)
+    if (allocated(me%tau)) deallocate(me%tau)
+    call cvAllocCoefs(me, maxord)
 
     ! no mallocs have been done yet
     me%MallocDone = .false.
@@ -2005,6 +2013,76 @@
 
 !*****************************************************************************************
 !>
+!  Allocate the method coefficient arrays `l(0:maxord)` and
+!  `tau(0:maxord+1)`, keeping their current contents (the new elements
+!  are zero). Not in C, where these arrays have the fixed size `L_MAX`.
+
+    subroutine cvAllocCoefs(me, maxord)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxord  !! maximum order to size the arrays for
+
+    real(wp),dimension(:),allocatable :: tmp  !! the new array
+
+    allocate(tmp(0:maxord), source=ZERO)
+    if (allocated(me%l)) then
+        tmp(0:min(maxord, ubound(me%l,1))) = me%l(0:min(maxord, ubound(me%l,1)))
+    end if
+    call move_alloc(tmp, me%l)
+
+    allocate(tmp(0:maxord+1), source=ZERO)
+    if (allocated(me%tau)) then
+        tmp(0:min(maxord+1, ubound(me%tau,1))) = me%tau(0:min(maxord+1, ubound(me%tau,1)))
+    end if
+    call move_alloc(tmp, me%tau)
+
+    end subroutine cvAllocCoefs
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
+!  Enlarge the storage for a larger maximum order `maxord > qmax_alloc`
+!  (Adams only; used by [[CVodeSetMaxOrd]]). Not in C.
+!
+!  If the history array `zn` is already allocated, it is reallocated with
+!  columns `0:maxord`. Columns `0:q` (the Nordsieck history) are kept. If
+!  `q < qmax`, the column `zn(:,qmax)` holds the `acor` saved for a possible
+!  order increase, and it is moved to the new last column `zn(:,maxord)`.
+!  If `q == qmax`, no `acor` has been saved, so `qwait` is raised to at
+!  least 2 to save one before an order increase is next considered.
+
+    subroutine cvIncreaseMaxOrd(me, maxord)
+
+    class(cvode_solver),intent(inout) :: me  !! the CVODE solver
+    integer,intent(in) :: maxord  !! the new maximum order (> qmax_alloc)
+
+    real(wp),dimension(:,:),allocatable :: zn_new  !! the enlarged history array
+    integer :: qold  !! the current maximum order
+    integer :: ncol  !! last zn column kept
+
+    call cvAllocCoefs(me, maxord)
+
+    if (allocated(me%zn)) then
+        qold = me%qmax
+        ncol = min(me%q, qold)
+        allocate(zn_new(size(me%zn,1), 0:maxord), source=ZERO)
+        zn_new(:,0:ncol) = me%zn(:,0:ncol)
+        if (me%q < qold) then
+            zn_new(:,maxord) = me%zn(:,qold)
+            if (me%indx_acor == qold) me%indx_acor = maxord
+        else
+            me%qwait = max(me%qwait, 2)
+        end if
+        call move_alloc(zn_new, me%zn)
+    end if
+
+    me%qmax_alloc = maxord
+
+    end subroutine cvIncreaseMaxOrd
+!*****************************************************************************************
+
+!*****************************************************************************************
+!>
 !  `cvFreeVectors`
 
     subroutine cvFreeVectors(me)
@@ -2757,7 +2835,7 @@
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
 
-    real(wp),dimension(0:L_MAX-1) :: m  !! coefficients of the product polynomial (cvAdamsStart)
+    real(wp),dimension(0:me%q) :: m  !! coefficients of the product polynomial (cvAdamsStart)
     real(wp),dimension(0:2) :: mm  !! alternating sums M[0..2] (C: M[3], renamed)
     real(wp) :: hsum  !! sum of the last q step sizes
 
@@ -2790,7 +2868,7 @@
     function cvAdamsStart(me, m) result(hsum)
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
-    real(wp),dimension(0:L_MAX-1),intent(inout) :: m  !! coefficients of the product polynomial (output)
+    real(wp),dimension(0:),intent(inout) :: m  !! coefficients of the product polynomial, m(0:q) (output)
     real(wp) :: hsum  !! sum of the step sizes (result)
 
     real(wp) :: xi_inv, sum  !! h/hsum and an alternating sum
@@ -2824,7 +2902,7 @@
     subroutine cvAdamsFinish(me, m, mm, hsum)
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
-    real(wp),dimension(0:L_MAX-1),intent(inout) :: m  !! coefficients of the product polynomial
+    real(wp),dimension(0:),intent(inout) :: m  !! coefficients of the product polynomial, m(0:q)
     real(wp),dimension(0:2),intent(inout) :: mm  !! alternating sums M[0..2]
     real(wp),intent(in) :: hsum  !! sum of the step sizes
 
@@ -4172,12 +4250,23 @@
 
 !*****************************************************************************************
 !>
-!  `CVodeSetMaxOrd`: maximum method order (may only be decreased).
+!  `CVodeSetMaxOrd`: maximum method order.
+!
+!  For BDF, as in C, the maximum order may only be decreased (the default
+!  and upper limit is `BDF_Q_MAX` = 5).
+!
+!  For Adams, the default is `ADAMS_Q_MAX` = 12, and (unlike C) the maximum
+!  order may also be increased above the value at creation; the history
+!  array and coefficient arrays are then enlarged. This may be called
+!  before [[CVodeInit]] or at any point during the integration. Note that
+!  very high orders are of limited practical use in floating-point arithmetic
+!  (the error test quantities lose accuracy), and they are never chosen
+!  unless they allow a larger step.
 
     subroutine CVodeSetMaxOrd(me, maxord, flag)
 
     class(cvode_solver),intent(inout) :: me  !! the CVODE solver
-    integer,intent(in) :: maxord  !! maximum order (cannot exceed the value at creation)
+    integer,intent(in) :: maxord  !! maximum order (for BDF, cannot exceed the value at creation)
     integer,intent(out) :: flag  !! return flag: `CV_SUCCESS` or a negative error code
 
     integer :: qmax_alloc  !! order used to allocate zn
@@ -4193,10 +4282,14 @@
     qmax_alloc = me%qmax_alloc
 
     if (maxord > qmax_alloc) then
-        call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetMaxOrd', &
-                            'Illegal attempt to increase maximum method order.')
-        flag = CV_ILL_INPUT
-        return
+        if (me%lmm /= CV_ADAMS) then
+            call cvProcessError(me, CV_ILL_INPUT, 'CVodeSetMaxOrd', &
+                                'Illegal attempt to increase maximum method order.')
+            flag = CV_ILL_INPUT
+            return
+        end if
+        ! Adams: enlarge the storage for the new maximum order
+        call cvIncreaseMaxOrd(me, maxord)
     end if
 
     me%qmax = maxord
